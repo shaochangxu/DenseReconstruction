@@ -536,6 +536,7 @@ void PatchMatchController::ReadProblems() {
         std::unordered_map<int, std::vector<int>> token(candidate_views.size());
         int iter = 0;
         while(iter < 5){
+          iter++;
           // change token with new center
           for(int i = 0; i < candidate_views.size(); i++){
             int minIndex = -1;
