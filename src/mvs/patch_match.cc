@@ -33,6 +33,7 @@
 
 #include <numeric>
 #include <unordered_set>
+#include <random>
 
 #include "mvs/consistency_graph.h"
 #include "mvs/patch_match_cuda.h"
@@ -325,7 +326,8 @@ void PatchMatchController::ReadProblems() {
           problem.src_image_idxs.push_back(image_idx);
         }
       }
-    } else if (problem_config.src_image_names.size() == 2 &&
+    } 
+    else if (problem_config.src_image_names.size() == 2 &&
                problem_config.src_image_names[0] == "__auto__") {
       // Use maximum number of overlapping images as source images. Overlapping
       // will be sorted based on the number of shared points to the reference
@@ -373,7 +375,230 @@ void PatchMatchController::ReadProblems() {
       for (size_t i = 0; i < eff_max_num_src_images; ++i) {
         problem.src_image_idxs.push_back(src_images[i].first);
       }
-    } else {
+    }  
+    else if(problem_config.src_image_names.size() == 3 $$
+               problem_config.src_image_names[0] == "__two-stage__"){
+      // perform two-stage select.
+      // e.g. __two-stage__ 3 7
+      // stage-mode 1: preform 1 stage
+      // stage-mode 2: preform 2 stage
+      // stage-mode 3: perform 1, 2 stage
+      const float pos_min_dis = 1;
+      const float pos_max_dis = 100;
+
+      const float ort_min_dis = M_PI / 8;
+      const float ort_max_dis = 7 * M_PI / 8;
+
+      const int stage_mode = static_cast<int>(std::stoll(problem_config.src_image_names[1]));
+      assert(stage_mode == 1 || stage_mode == 2 || stage_mode == 3);
+
+      const size_t max_num_src_images = std::stoll(problem_config.src_image_names[2]);
+
+      const auto view_ort = model.ComputeViewRay();
+      const auto view_pos = model.ComputeViewPos();
+
+      vector<std::pair<int, float>> candidate_views;
+      Eigen::Vector3f ref_ort = view_ort.at(problem.ref_image_idx);
+      Eigen::Vector3f ref_pos = view_pos.at(problem.ref_image_idx);
+
+      if(stage_mode == 1 || stage_mode == 3){
+        // stage 1 : filter out the view
+        for(size_t image_idx = 0; image_idx < model.images.size(); image_idx++){
+          if (static_cast<int>(image_idx) != problem.ref_image_idx) {
+            Eigen::Vector3f src_ort = view_ort.at(image_idx);
+            Eigen::Vector3f src_pos = view_pos.at(image_idx);
+            float pos_dis = (ref_pos - src_pos).norm();
+            float ort_dis = acos( ref_pos.dot(src_pos) / (ref_ort.norm() * src_pos.norm) );
+            if(pos_dis > pos_min_dis && pos_dis < pos_max_dis && 
+                ort_dis > ort_min_dis && ort_dis < ort_max_dis){
+                  float score = (pos_dis - pos_min_dis) / (pos_max_dis - pos_dis) +
+                                  (ort_dis - ort_min_dis) / (ort_max_dis - ort_min_dis);
+                  candidate_views.emplace_back(make_pair(static_cast<int>(image_idx), score));
+            }
+          }
+        }
+      }
+      else{
+        for(size_t image_idx = 0; image_idx < model.images.size(); image_idx++){
+          candidate_views.emplace_back(make_pair(image_idx, -1.0f));
+        }
+      }
+
+      std::vector<std::pair<int, float>> src_images;
+      if(stage_mode == 2 || stage_mode == 3){
+        //perform stage 2 k-means
+
+        // compute features for each view
+        std::unordered_map<int, Eigen::Vector3f> view_feats;
+        Bitmap ref_img;
+        ref_img.Read(workspace_->GetBitmapPath(problem.ref_image_idx), false);
+
+        std::unordered_map<int, vector<int>> fs;
+        std::unordered_map<int, float> wn;
+        
+        std::vector<Eigen::Vector3d> proj_centers(model.images.size());
+        for (size_t image_idx = 0; image_idx < model.images.size(); ++image_idx) {
+          const auto& image = model.images[image_idx];
+          Eigen::Vector3f C;
+          ComputeProjectionCenter(image.GetR(), image.GetT(), C.data());
+          proj_centers[image_idx] = C.cast<double>();
+        }
+
+        for (size_t p_id = 0; p_id < model.points.size(); p_id++) {
+          auto point = model.points[p_id];
+
+          for (size_t i = 0; i < point.track.size(); ++i) {
+            const int image_idx1 = point.track[i];
+            if(image_idx1 == problem.ref_image_idx){
+              for(size_t j = 0; j < point.track.size(); ++j){
+                if(i != j){
+                  fs[point.track[j]].emplace_back(p_id);
+                }
+              }
+              break;
+            }
+          }
+
+          float score = 1.0f;
+          for (size_t i = 0; i < point.track.size(); ++i) {
+            for(size_t j = 0; j < i; ++j){
+              const float angle = CalculateTriangulationAngle(
+                                     proj_centers.at(i), proj_centers.at(j),
+                                     Eigen::Vector3d(point.x, point.y, point.z));
+              score *= std::min(( angle * angle / ort_max_dis * ort_max_dis), 1.0f);
+            }
+          }
+          wn[p_id] = score;
+
+        }
+        
+        const float* ref_K = model.images[problem.ref_image_idx].GetK();
+        const Eigen::Map<const Eigen::Matrix<float, 3, 4, Eigen::RowMajor>> ref_P_m(model.images[problem.ref_image_idx].GetP());
+              
+        for(size_t image_idx = 0; image_idx < model.images.size(); image_idx++){
+          if (static_cast<int>(image_idx) != problem.ref_image_idx) {
+            // geom dis score
+            Eigen::Vector3f src_ort = view_ort.at(image_idx);
+            Eigen::Vector3f src_pos = view_pos.at(image_idx);
+            float pos_dis = (ref_pos - src_pos).norm();
+            float ort_dis = acos( ref_pos.dot(src_pos) / (ref_ort.norm() * src_pos.norm));
+            float geom_dis = 0.5 * (pos_dis - pos_min_dis) / (pos_max_dis - pos_dis) +
+                                  0.5 *(ort_dis - ort_min_dis) / (ort_max_dis - ort_min_dis);
+
+            // shared point score
+            float point_dis = 0.0f;
+            for(auto p_id: fs[image_idx]){
+              auto point = model.points[p_id];
+              
+              Eigen::Vector4f p1(point.x, point.y, point.z, 1)
+              Eigen::Vector3f ref_p_m = ref_P_m * p1;
+              const ref_f = std::min(ref_K[0], ref_K[4]);
+              float sr = std::abs(ref_p_m.z) / ref_f;
+
+              const float* src_K = model.images[image_idx].GetK();
+              const Eigen::Map<const Eigen::Matrix<float, 3, 4, Eigen::RowMajor>> src_P_m(model.images[image_idx].GetP());
+              Eigen::Vector3f src_p_m = src_P_m * p1;
+              const src_f = std::min(ref_K[0], ref_K[4]);
+              float sv = std::abs(src_p_m.z) / src_f;
+
+              const r = sr / sv;
+              float ws = r;
+              
+              if(r >= 2){
+                ws = 2 / r;
+              }
+              else if(r >= 1 && r < 2){
+                ws = 1.0f;
+              }
+
+              point_dis += wn[p_id] * ws;
+            }
+
+            // img similarity score
+            Bitmap src_img;
+            src_img.Read(workspace_->GetBitmapPath(problem.image_idx), false);
+            float img_dis = 1 - ref_img.GetImageSimilarity(src_img);
+
+            view_feats[static_cast<int>(image_idx)] = Eigen::Vector3f(geom_dis, point_dis, img_dis);
+          }
+        }
+        // k means
+        int k = std::min(candidate_views.size(), max_num_src_images);
+        float a1 = 1.0f;
+        float a2 = 1.0f;
+        float a3 = 1.0f;
+        
+        vector<int> center_ids(k);
+        for(int i = 0; i < k; i++){
+            center_ids[i] = rand() % candidate_views.size();
+        }
+
+        std::unordered_map<int, std::vector<int>> token(candidate_views.size());
+        int iter = 0;
+        while(iter < 5){
+          // change token with new center
+          for(int i = 0; i < candidate_views.size(); i++){
+            int minIndex = -1;
+            float minDis = INFINITY;
+
+            for(int j = 0; j < k; j++){
+              Eigen::Vector3f center_f = view_feats[candidate_views[center_ids[j]].first];
+              Eigen::Vector3f f = view_feats[candidate_views[i].first];
+              float dis = a1 * (center_f.x - f.x) + a1 * (center_f.y - f.y) + a1 * (center_f.z - f.z);
+              if(dis < minDis){
+                  minDis = dis;
+                  minIndex = j;
+              }
+            }
+            token[j].emplace_back(i);
+          }
+
+          // updata new center
+          for(int j = 0; j < k; j++){
+            Eigen::Vector3f new_center_f(0.0f, 0.0f, 0.0f);
+            for(auto cand_id: token[j]){
+              new_center_f += view_feats[candidate_views[cand_id].first];
+            }
+            new_center_f = new_center_f / token[j].size();
+
+            // use the closest one as new center
+            int minIndex = -1;
+            float minDis = INFINITY;
+            for(int token_id = 0; token_id < token[j].size(); token_id++){
+              Eigen::Vector3f f = view_feats[candidate_views[token[j][token_id]].first];
+              float dis = a1 * (new_center_f.x - f.x) + a1 * (new_center_f.y - f.y) + a1 * (new_center_f.z - f.z);
+              if(dis < minDis){
+                  minDis = dis;
+                  minIndex = token_id;
+              }
+            }
+            center_ids[j] = token[j][minIndex];
+          }
+        }
+
+        for (size_t i = 0; i < k; ++i) {
+          problem.src_image_idxs.push_back(candidate_views[center_ids[i]].first);
+        }
+      }
+      else{
+        // stage_mode = 1
+        const size_t eff_max_num_src_images =
+          std::min(candidate_views.size(), max_num_src_images);
+        std::partial_sort(candidate_views.begin(),
+                      candidate_views.begin() + eff_max_num_src_images,
+                      candidate_views.end(),
+                      [](const std::pair<int, float>& image1,
+                          const std::pair<int, float>& image2) {
+                        return image1.second > image2.second;
+                      });
+        problem.src_image_idxs.reserve(eff_max_num_src_images);
+        // add the k src imgs with high scores
+        for (size_t i = 0; i < eff_max_num_src_images; ++i) {
+          problem.src_image_idxs.push_back(candidate_views[i].first);
+        }
+      }
+    }
+    else {
       problem.src_image_idxs.reserve(problem_config.src_image_names.size());
       for (const auto& src_image_name : problem_config.src_image_names) {
         problem.src_image_idxs.push_back(model.GetImageIdx(src_image_name));

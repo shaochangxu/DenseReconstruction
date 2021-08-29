@@ -179,6 +179,9 @@ class Bitmap {
   bool ReadExifTag(const FREE_IMAGE_MDMODEL model, const std::string& tag_name,
                    std::string* result) const;
 
+  // cal ssim 
+  float GetImageSimilarity(Bitmap& src_img) const;
+  
  private:
   typedef std::unique_ptr<FIBITMAP, decltype(&FreeImage_Unload)> FIBitmapPtr;
 

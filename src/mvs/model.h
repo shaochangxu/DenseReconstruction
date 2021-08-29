@@ -86,6 +86,10 @@ struct Model {
   std::vector<std::map<int, float>> ComputeTriangulationAngles(
       const float percentile = 50) const;
 
+  // Compute the view ray and pos of each view
+  std::unordered_map<Eigen::Vector3f> Model::ComputeViewRays() const;
+  std::unordered_map<Eigen::Vector3f> Model::ComputeViewPos() const;
+
   // Note that in case the data is read from a COLMAP reconstruction, the index
   // of an image or point does not correspond to its original identifier in the
   // reconstruction, but it corresponds to the position in the

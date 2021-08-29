@@ -628,6 +628,66 @@ bool Bitmap::IsPtrSupported(FIBITMAP* data) {
   return IsPtrGrey(data) || IsPtrRGB(data);
 }
 
+float Bitmap::GetImageSimilarity(Bitmap& src_img) const{
+  if(this->width_ != src_img.GetWidth() || this->height_ != src_img.GetHeight()){
+     std::cerr << "must be same size in cal image similarity, try to resize" << std::endl;
+     src_img.Rescale(this->width_, this->height_);
+  }
+
+  int patch_width = 21;
+  int patch_height = 21;
+
+  float mssim = 0.0f;
+  int patch_num = 0;
+  const int L = 255;
+  const float c1 = 0.0001 * L * L;
+  const float c2 = 0.0009 * L * L;
+
+  BitmapColor<uint8_t>* ref_color;
+  BitmapColor<uint8_t>* src_color;
+  for(int r = 0; r < this->height_; r += patch_height){
+    for(int c = 0; c < this->width_; c +=  patch_width){
+      patch_num++;
+      
+      float sum_x = 0.0f;
+      float sum_y = 0.0f;
+      float sum_xx = 0.0f;
+      float sum_yy = 0.0f;
+      float sum_xy = 0.0f;
+      int pixel_num = min(r + patch_height, this->height_) * min(c + patch_width, this->width_);
+      
+      for(int pr = r; pr < min(r + patch_height, this->height_); pr++){
+        for(int pc = c; pr < min(c + patch_width, this->width_); pc++){
+          
+          float x =  (float)(this->GetPixel(pc, pr,ref_color)->r);
+          float y =  (float)(src_img.GetPixel(pc, pr, src_color)->r);
+
+          sum_x += x;
+          sum_y += y;
+          sum_xx += x * x;
+          sum_yy += y * y;
+          sum_xy += x * y;
+        }
+      }
+      float mu_x = sum_x / pixel_num;
+      float mu_y = sum_y / pixel_num;
+      float sigma_x = sum_xx / pixel_num - mu_x * mu_x;
+      float sigma_y = sum_yy / pixel_num - mu_y * mu_y;
+      float sigma_xy = sum_xy / pixel_num - mu_x * mu_y;
+      float ssim = ((2 * mu_x * mu_y + c1) * (2 * sigma_xy + c2)) /
+                     ((mu_x * mu_x + mu_y * mu_y + c1) * (sigma_x + sigma_y + c2));
+      mssim += ssim;
+    }
+  }
+
+  mssim = mssim / patch_num;
+
+  return mssim;
+}
+
+
+
+
 float JetColormap::Red(const float gray) { return Base(gray - 0.25f); }
 
 float JetColormap::Green(const float gray) { return Base(gray); }
