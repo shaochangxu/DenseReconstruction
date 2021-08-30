@@ -237,7 +237,7 @@ std::unordered_map<int, Model::Point> Model::ComputeViewRays() const {
   for (size_t image_idx = 0; image_idx < images.size(); ++image_idx) {
     const auto& image = images[image_idx];
     const float * n = image.GetViewingDirection();
-    view_rays[static_cast<int>(image_idx)] = Point(n[0], n[1], n[2]);
+    view_rays[static_cast<int>(image_idx)] = Model::Point(n[0], n[1], n[2]);
   }
   return view_rays;
 }
@@ -248,7 +248,7 @@ std::unordered_map<int, Model::Point> Model::ComputeViewPos() const {
     const auto& image = images[image_idx];
     Eigen::Vector3f C;
     ComputeProjectionCenter(image.GetR(), image.GetT(), C.data());
-    proj_centers[static_cast<int>(image_idx)] = Point(C.x, C.y, C.z);
+    proj_centers[static_cast<int>(image_idx)] = Model::Point(C.x, C.y, C.z);
   }
   return proj_centers;
 }
@@ -483,33 +483,33 @@ float Model::Point::norm(){
 
 Model::Point Model::Point::operator-(Model::Point& p){
   Model::Point re;
-  re.x = this.x - p.x;
-  re.y = this.y - p.y;
-  re.z = this.z - p.z;
+  re.x = this->x - p.x;
+  re.y = this->y - p.y;
+  re.z = this->z - p.z;
   return re;
 }
 
 Model::Point Model::Point::operator+(Model::Point& p){
   Model::Point re;
-  re.x = this.x + p.x;
-  re.y = this.y + p.y;
-  re.z = this.z + p.z;
+  re.x = this->x + p.x;
+  re.y = this->y + p.y;
+  re.z = this->z + p.z;
   return re;
 }
 
 Model::Point Model::Point::operator*(const float a){
   Model::Point re;
-  re.x = this.x * a;
-  re.y = this.y * a;
-  re.z = this.z * a;
+  re.x = this->x * a;
+  re.y = this->y * a;
+  re.z = this->z * a;
   return re;
 }
 
 Model::Point Model::Point::operator/(const float a){
   Model::Point re;
-  re.x = this.x / a;
-  re.y = this.y / a;
-  re.z = this.z / a;
+  re.x = this->x / a;
+  re.y = this->y / a;
+  re.z = this->z / a;
   return re;
 }
 
