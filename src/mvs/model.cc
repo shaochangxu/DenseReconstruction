@@ -248,7 +248,7 @@ std::unordered_map<int, Model::Point> Model::ComputeViewPos() const {
     const auto& image = images[image_idx];
     Eigen::Vector3f C;
     ComputeProjectionCenter(image.GetR(), image.GetT(), C.data());
-    proj_centers[static_cast<int>(image_idx)] = Model::Point(C.x, C.y, C.z);
+    proj_centers[static_cast<int>(image_idx)] = Model::Point((float)C.x, (float)C.y, (float)C.z);
   }
   return proj_centers;
 }
@@ -481,7 +481,7 @@ float Model::Point::norm(){
   return sqrtf(this->x * this->x + this->y * this->y + this->z * this->z);
 }
 
-Model::Point Model::Point::operator-(Model::Point& p){
+Model::Point Model::Point::operator-(const Model::Point& p){
   Model::Point re;
   re.x = this->x - p.x;
   re.y = this->y - p.y;
@@ -489,7 +489,7 @@ Model::Point Model::Point::operator-(Model::Point& p){
   return re;
 }
 
-Model::Point Model::Point::operator+(Model::Point& p){
+Model::Point Model::Point::operator+(const Model::Point& p){
   Model::Point re;
   re.x = this->x + p.x;
   re.y = this->y + p.y;
