@@ -232,12 +232,12 @@ std::vector<std::map<int, int>> Model::ComputeSharedPoints() const {
   return shared_points;
 }
 
-std::unordered_map<Eigen::Vector3f> Model::ComputeViewRays() const {
-  std::unordered_map<Eigen::Vector3f> view_rays(images.size());
+std::unordered_map<int, Eigen::Vector3f> Model::ComputeViewRays() const {
+  std::unordered_map<int, Eigen::Vector3f> view_rays(images.size());
   for (size_t image_idx = 0; image_idx < images.size(); ++image_idx) {
     const auto& image = images[image_idx];
-    float * n = image.GetViewingDirection();
-    view_rays[image_idx] = Eigen::Vector3f(n[0], n[1], n[2]);
+    const float * n = image.GetViewingDirection();
+    view_rays[static_cast<int>(image_idx] = Eigen::Vector3f(n[0], n[1], n[2]);
   }
   return view_rays;
 }
@@ -248,7 +248,7 @@ std::unordered_map<int, Eigen::Vector3f> Model::ComputeViewPos() const {
     const auto& image = images[image_idx];
     Eigen::Vector3f C;
     ComputeProjectionCenter(image.GetR(), image.GetT(), C.data());
-    proj_centers[image_idx] = C;
+    proj_centers[static_cast<int>(image_idx)] = C;
   }
   return proj_centers;
 }

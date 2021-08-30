@@ -629,7 +629,7 @@ bool Bitmap::IsPtrSupported(FIBITMAP* data) {
 }
 
 float Bitmap::GetImageSimilarity(Bitmap& src_img) const{
-  if(this->width_ != src_img.GetWidth() || this->height_ != src_img.GetHeight()){
+  if(this->width_ != src_img.Width() || this->height_ != src_img.Height()){
      std::cerr << "must be same size in cal image similarity, try to resize" << std::endl;
      src_img.Rescale(this->width_, this->height_);
   }
@@ -654,13 +654,14 @@ float Bitmap::GetImageSimilarity(Bitmap& src_img) const{
       float sum_xx = 0.0f;
       float sum_yy = 0.0f;
       float sum_xy = 0.0f;
-      int pixel_num = min(r + patch_height, this->height_) * min(c + patch_width, this->width_);
+      int pixel_num = std::min(r + patch_height, this->height_) * std::min(c + patch_width, this->width_);
       
-      for(int pr = r; pr < min(r + patch_height, this->height_); pr++){
-        for(int pc = c; pr < min(c + patch_width, this->width_); pc++){
-          
-          float x =  (float)(this->GetPixel(pc, pr,ref_color)->r);
-          float y =  (float)(src_img.GetPixel(pc, pr, src_color)->r);
+      for(int pr = r; pr < std::min(r + patch_height, this->height_); pr++){
+        for(int pc = c; pr < std::min(c + patch_width, this->width_); pc++){
+          this->GetPixel(pc, pr,ref_color);
+          src_img.GetPixel(pc, pr, src_color);
+          float x =  (float)(ref_color->r);
+          float y =  (float)(src_color->r);
 
           sum_x += x;
           sum_y += y;
