@@ -383,11 +383,11 @@ void PatchMatchController::ReadProblems() {
       // stage-mode 1: preform 1 stage
       // stage-mode 2: preform 2 stage
       // stage-mode 3: perform 1, 2 stage
-      const float pos_min_dis = 1;
-      const float pos_max_dis = 100;
+      const float pos_min_dis = 3;
+      const float pos_max_dis = 7;
 
-      const float ort_min_dis = M_PI / 8;
-      const float ort_max_dis = 7 * M_PI / 8;
+      const float ort_min_dis = M_PI / 4;
+      const float ort_max_dis = 2 * M_PI / 3;
 
       const int stage_mode = static_cast<int>(std::stoll(problem_config.src_image_names[1]));
       assert(stage_mode == 1 || stage_mode == 2 || stage_mode == 3);
@@ -409,7 +409,9 @@ void PatchMatchController::ReadProblems() {
             Model::Point src_pos = view_pos.at(image_idx);
             float pos_dis = (ref_pos - src_pos).norm();
             float ort_dis = acos( ref_ort.dot(src_ort) / (ref_ort.norm() * src_ort.norm()) );
-            if(pos_dis > pos_min_dis && pos_dis < pos_max_dis && 
+            //std::cout << "pos_dis:" << pos_dis << std::endl; 
+	    //std::cout << "ort_dis:" << ort_dis << std::endl;
+	    if(pos_dis > pos_min_dis && pos_dis < pos_max_dis && 
                 ort_dis > ort_min_dis && ort_dis < ort_max_dis){
                   float score = (pos_dis - pos_min_dis) / (pos_max_dis - pos_dis) +
                                   (ort_dis - ort_min_dis) / (ort_max_dis - ort_min_dis);
@@ -431,8 +433,8 @@ void PatchMatchController::ReadProblems() {
         // compute features for each view
         std::unordered_map<int, Model::Point> view_feats;
         Bitmap ref_img;
-        ref_img.Read(workspace_->GetBitmapPath(problem.ref_image_idx), false);
-
+	CHECK(ref_img.Read(workspace_->GetBitmapPath(problem.ref_image_idx), false));
+	
         std::unordered_map<int, std::vector<int>> fs;
         std::unordered_map<int, float> wn;
         
@@ -518,11 +520,11 @@ void PatchMatchController::ReadProblems() {
 
             // img similarity score
             Bitmap src_img;
-            src_img.Read(workspace_->GetBitmapPath(image_idx), false);
+            CHECK(src_img.Read(workspace_->GetBitmapPath(image_idx), false));
             float img_dis = 1 - ref_img.GetImageSimilarity(src_img);
-
+	    //float img_dis = 0.0f;
             view_feats[static_cast<int>(image_idx)] = Model::Point(geom_dis, point_dis, img_dis);
-          }
+	  }
         }
         // k means
         size_t k = std::min(candidate_views.size(), max_num_src_images);
@@ -530,13 +532,14 @@ void PatchMatchController::ReadProblems() {
         float a2 = 1.0f;
         float a3 = 1.0f;
         
-        std::vector<int> center_ids(k);
-        for(size_t i = 0; i < k; i++){
-            center_ids[i] = rand() % candidate_views.size();
-        }
+        std::vector<int> center_ids(candidate_views.size());
+	std::iota(center_ids.begin(), center_ids.end(), 0);
+	std::random_shuffle (center_ids.begin(), center_ids.end());
+	center_ids.reserve(k);
 
-        std::unordered_map<int, std::vector<int>> token(candidate_views.size());
-        int iter = 0;
+        std::unordered_map<int, std::vector<int>> token;
+        std::cout << "candidate size:" << candidate_views.size() << std::endl;
+	int iter = 0;
         while(iter < 5){
           iter++;
           // change token with new center
@@ -547,23 +550,26 @@ void PatchMatchController::ReadProblems() {
             for(size_t j = 0; j < k; j++){
               Model::Point center_f = view_feats[candidate_views[center_ids[j]].first];
               Model::Point f = view_feats[candidate_views[i].first];
-              float dis = a1 * (center_f.x - f.x) + a2 * (center_f.y - f.y) + a3 * (center_f.z - f.z);
-              if(dis < minDis){
+              float dis = a1 * std::abs(center_f.x - f.x) + a2 * std::abs(center_f.y - f.y) + a3 * std::abs(center_f.z - f.z);
+              //std::cout << i << "," <<j << ","<<dis << ";";
+	      if(dis < minDis){
                   minDis = dis;
                   minIndex = j;
               }
             }
+ 	    //std::cout << i << " belong to " << minIndex<<std::endl;
             token[minIndex].emplace_back(i);
           }
-
           // updata new center
+
           for(size_t j = 0; j < k; j++){
             Model::Point new_center_f(0.0f, 0.0f, 0.0f);
+            //std::cout << token[j].size() << std::endl;
             for(auto cand_id: token[j]){
               new_center_f = new_center_f + view_feats[candidate_views[cand_id].first];
             }
             new_center_f = new_center_f / ((float)token[j].size());
-
+		//std::cout <<"here2" <<std::endl;
             // use the closest one as new center
             int minIndex = -1;
             float minDis = INFINITY;
@@ -575,6 +581,7 @@ void PatchMatchController::ReadProblems() {
                   minIndex = token_id;
               }
             }
+//std::cout <<"here3" <<std::endl;
             center_ids[j] = token[j][minIndex];
           }
         }

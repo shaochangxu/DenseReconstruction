@@ -643,8 +643,9 @@ float Bitmap::GetImageSimilarity(Bitmap& src_img) const{
   const float c1 = 0.0001 * L * L;
   const float c2 = 0.0009 * L * L;
 
-  BitmapColor<uint8_t>* ref_color;
-  BitmapColor<uint8_t>* src_color;
+  BitmapColor<uint8_t> ref_color;
+  BitmapColor<uint8_t> src_color;
+  
   for(int r = 0; r < this->height_; r += patch_height){
     for(int c = 0; c < this->width_; c +=  patch_width){
       patch_num++;
@@ -654,14 +655,14 @@ float Bitmap::GetImageSimilarity(Bitmap& src_img) const{
       float sum_xx = 0.0f;
       float sum_yy = 0.0f;
       float sum_xy = 0.0f;
-      int pixel_num = std::min(r + patch_height, this->height_) * std::min(c + patch_width, this->width_);
+      int pixel_num = (std::min(r + patch_height, this->height_) - r) * (std::min(c + patch_width, this->width_) - c);
       
       for(int pr = r; pr < std::min(r + patch_height, this->height_); pr++){
         for(int pc = c; pr < std::min(c + patch_width, this->width_); pc++){
-          this->GetPixel(pc, pr,ref_color);
-          src_img.GetPixel(pc, pr, src_color);
-          float x =  (float)(ref_color->r);
-          float y =  (float)(src_color->r);
+	  this->GetPixel(pc, pr, &ref_color);
+          src_img.GetPixel(pc, pr, &src_color);
+          float x =  (float)(ref_color.r);
+          float y =  (float)(src_color.r);
 
           sum_x += x;
           sum_y += y;
