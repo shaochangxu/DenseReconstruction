@@ -232,8 +232,8 @@ std::vector<std::map<int, int>> Model::ComputeSharedPoints() const {
   return shared_points;
 }
 
-std::unordered_map<int, Point> Model::ComputeViewRays() const {
-  std::unordered_map<int, Point> view_rays(images.size());
+std::unordered_map<int, Model::Point> Model::ComputeViewRays() const {
+  std::unordered_map<int, Model::Point> view_rays(images.size());
   for (size_t image_idx = 0; image_idx < images.size(); ++image_idx) {
     const auto& image = images[image_idx];
     const float * n = image.GetViewingDirection();
@@ -242,8 +242,8 @@ std::unordered_map<int, Point> Model::ComputeViewRays() const {
   return view_rays;
 }
 
-std::unordered_map<int, Point> Model::ComputeViewPos() const {
-  std::unordered_map<int, Point> proj_centers(images.size());
+std::unordered_map<int, Model::Point> Model::ComputeViewPos() const {
+  std::unordered_map<int, Model::Point> proj_centers(images.size());
   for (size_t image_idx = 0; image_idx < images.size(); ++image_idx) {
     const auto& image = images[image_idx];
     Eigen::Vector3f C;
@@ -465,7 +465,7 @@ bool Model::ReadFromRawPMVS(const std::string& path) {
   return true;
 }
 
-float Model::CalculateTriangulationAnglePoint(Point& c1, Point& c2, Point& p) const {
+float Model::CalculateTriangulationAnglePoint(Model::Point& c1, Model::Point& c2, Model::Point& p) const {
    return CalculateTriangulationAngle(
             Eigen::Vector3d(c1.x, c1.y, c1.z),
             Eigen::Vector3d(c2.x, c2.y, c2.z),
@@ -473,40 +473,40 @@ float Model::CalculateTriangulationAnglePoint(Point& c1, Point& c2, Point& p) co
           );
 }
 
-float Model::Point::dot(Point& p){
+float Model::Point::dot(Model::Point& p){
   return this->x * p.x + this->y * p.y + this->z * p.z;
 }
 
 float Model::Point::norm(){
-  return std::sqrtf(this->x * this->x + this->y * this->y + this->z * this->z);
+  return sqrtf(this->x * this->x + this->y * this->y + this->z * this->z);
 }
 
-Point Model::Point::operator-(Point& p){
-  Point re;
+Model::Point Model::Point::operator-(Model::Point& p){
+  Model::Point re;
   re.x = this.x - p.x;
   re.y = this.y - p.y;
   re.z = this.z - p.z;
   return re;
 }
 
-Point Model::Point::operator+(Point& p){
-  Point re;
+Model::Point Model::Point::operator+(Model::Point& p){
+  Model::Point re;
   re.x = this.x + p.x;
   re.y = this.y + p.y;
   re.z = this.z + p.z;
   return re;
 }
 
-Point Model::Point::operator*(const float a){
-  Point re;
+Model::Point Model::Point::operator*(const float a){
+  Model::Point re;
   re.x = this.x * a;
   re.y = this.y * a;
   re.z = this.z * a;
   return re;
 }
 
-Point Model::Point::operator/(const float a){
-  Point re;
+Model::Point Model::Point::operator/(const float a){
+  Model::Point re;
   re.x = this.x / a;
   re.y = this.y / a;
   re.z = this.z / a;
