@@ -237,7 +237,7 @@ std::unordered_map<int, Eigen::Vector3f> Model::ComputeViewRays() const {
   for (size_t image_idx = 0; image_idx < images.size(); ++image_idx) {
     const auto& image = images[image_idx];
     const float * n = image.GetViewingDirection();
-    view_rays[static_cast<int>(image_idx] = Eigen::Vector3f(n[0], n[1], n[2]);
+    view_rays[static_cast<int>(image_idx)] = Eigen::Vector3f(n[0], n[1], n[2]);
   }
   return view_rays;
 }
