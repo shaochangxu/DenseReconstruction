@@ -248,7 +248,7 @@ std::unordered_map<int, Model::Point> Model::ComputeViewPos() const {
     const auto& image = images[image_idx];
     Eigen::Vector3f C;
     ComputeProjectionCenter(image.GetR(), image.GetT(), C.data());
-    proj_centers[static_cast<int>(image_idx)] = Model::Point((float)C.x, (float)C.y, (float)C.z);
+    proj_centers[static_cast<int>(image_idx)] = Model::Point(C[0], C[1], C[2]);
   }
   return proj_centers;
 }

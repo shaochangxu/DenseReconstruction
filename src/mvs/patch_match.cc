@@ -466,7 +466,7 @@ void PatchMatchController::ReadProblems() {
           float score = 1.0f;
           for (size_t i = 0; i < point.track.size(); ++i) {
             for(size_t j = 0; j < i; ++j){
-              const float angle = CalculateTriangulationAnglePoint(
+              const float angle = model.CalculateTriangulationAnglePoint(
                                      proj_centers.at(i), proj_centers.at(j),
                                      point);
               score *= std::min(( angle * angle / ort_max_dis * ort_max_dis), 1.0f);
@@ -484,7 +484,7 @@ void PatchMatchController::ReadProblems() {
             Model::Point src_ort = view_ort.at(image_idx);
             Model::Point src_pos = view_pos.at(image_idx);
             float pos_dis = (ref_pos - src_pos).norm();
-            float ort_dis = acos( ref_ort.dot(src_ort) / (ref_ort.norm() * src_ort.norm));
+            float ort_dis = acos( ref_ort.dot(src_ort) / (ref_ort.norm() * src_ort.norm()) );
             float geom_dis = 0.5 * (pos_dis - pos_min_dis) / (pos_max_dis - pos_dis) +
                                   0.5 *(ort_dis - ort_min_dis) / (ort_max_dis - ort_min_dis);
 
@@ -500,7 +500,7 @@ void PatchMatchController::ReadProblems() {
               const float* src_K = model.images[image_idx].GetK();
               const float* src_P = model.images[image_idx].GetP();
               const float src_p_z = src_P[8] * point.x + src_P[9] * point.y + src_P[10] * point.z + src_P[11];
-              const float src_f = std::min(ref_K[0], ref_K[4]);
+              const float src_f = std::min(src_K[0], src_K[4]);
               float sv = std::abs(src_p_z) / src_f;
 
               const float r = sr / sv;
@@ -525,13 +525,13 @@ void PatchMatchController::ReadProblems() {
           }
         }
         // k means
-        int k = std::min(candidate_views.size(), max_num_src_images);
+        size_t k = std::min(candidate_views.size(), max_num_src_images);
         float a1 = 1.0f;
         float a2 = 1.0f;
         float a3 = 1.0f;
         
         std::vector<int> center_ids(k);
-        for(int i = 0; i < k; i++){
+        for(size_t i = 0; i < k; i++){
             center_ids[i] = rand() % candidate_views.size();
         }
 
@@ -540,11 +540,11 @@ void PatchMatchController::ReadProblems() {
         while(iter < 5){
           iter++;
           // change token with new center
-          for(int i = 0; i < candidate_views.size(); i++){
+          for(size_t i = 0; i < candidate_views.size(); i++){
             int minIndex = -1;
             float minDis = INFINITY;
 
-            for(int j = 0; j < k; j++){
+            for(size_t j = 0; j < k; j++){
               Model::Point center_f = view_feats[candidate_views[center_ids[j]].first];
               Model::Point f = view_feats[candidate_views[i].first];
               float dis = a1 * (center_f.x - f.x) + a2 * (center_f.y - f.y) + a3 * (center_f.z - f.z);
@@ -557,7 +557,7 @@ void PatchMatchController::ReadProblems() {
           }
 
           // updata new center
-          for(int j = 0; j < k; j++){
+          for(size_t j = 0; j < k; j++){
             Model::Point new_center_f(0.0f, 0.0f, 0.0f);
             for(auto cand_id: token[j]){
               new_center_f = new_center_f + view_feats[candidate_views[cand_id].first];
@@ -567,7 +567,7 @@ void PatchMatchController::ReadProblems() {
             // use the closest one as new center
             int minIndex = -1;
             float minDis = INFINITY;
-            for(int token_id = 0; token_id < token[j].size(); token_id++){
+            for(size_t token_id = 0; token_id < token[j].size(); token_id++){
               Model::Point f = view_feats[candidate_views[token[j][token_id]].first];
               float dis = a1 * (new_center_f.x - f.x) + a2 * (new_center_f.y - f.y) + a3 * (new_center_f.z - f.z);
               if(dis < minDis){
