@@ -39,7 +39,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <Eigen/Core>
 
 #include "mvs/depth_map.h"
 #include "mvs/image.h"
@@ -55,6 +54,14 @@ struct Model {
     float y = 0;
     float z = 0;
     std::vector<int> track;
+    Point(){}
+    Point(float a, float b, float c) :x(a), y(b), z(c){}
+    float norm();
+    float dot(Point& p);
+    Point operator-(const Point& p);
+    Point operator+(const Point& p);
+    Point operator*(const float scale);
+    Point operator/(const float scale);
   };
 
   // Read the model from different data formats.
@@ -88,9 +95,9 @@ struct Model {
       const float percentile = 50) const;
 
   // Compute the view ray and pos of each view
-  std::unordered_map<int, Eigen::Vector3f> ComputeViewRays() const;
-  std::unordered_map<int, Eigen::Vector3f> ComputeViewPos() const;
-
+  std::unordered_map<int, Point> ComputeViewRays() const;
+  std::unordered_map<int, Point> ComputeViewPos() const;
+  float CalculateTriangulationAnglePoint(Point& c1, Point& c2, Point& p) const;
   // Note that in case the data is read from a COLMAP reconstruction, the index
   // of an image or point does not correspond to its original identifier in the
   // reconstruction, but it corresponds to the position in the
