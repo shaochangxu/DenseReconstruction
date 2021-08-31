@@ -41,8 +41,13 @@ using namespace std;
 #include "util/math.h"
 #include "util/misc.h"
 
+#include <opencv2/cudaarithm.hpp>
+#include <opencv2/cudafilters.hpp>
 
-void FI2MAT(FIBITMAP* src, Mat& dst)
+
+namespace colmap{
+
+void Bitmap::FI2MAT(FIBITMAP* src, cv::Mat& dst)
 {
     //FIT_BITMAP    //standard image : 1 - , 4 - , 8 - , 16 - , 24 - , 32 - bit
     //FIT_UINT16    //array of unsigned short : unsigned 16 - bit
@@ -124,9 +129,6 @@ void FI2MAT(FIBITMAP* src, Mat& dst)
 
     flip(dst, dst, 0);
 }
-
-
-namespace colmap {
 
 Bitmap::Bitmap()
     : data_(nullptr, &FreeImage_Unload), width_(0), height_(0), channels_(0) {}
@@ -721,8 +723,8 @@ cv::Scalar Bitmap::getMSSIM_CUDA_optimized( const cv::Mat& i1, const cv::Mat& i2
     b.gI1.upload(i1);
     b.gI2.upload(i2);
     cv::cuda::Stream stream;
-    b.gI1.convertTo(b.t1, cv::CV_32F, stream);
-    b.gI2.convertTo(b.t2, cv::CV_32F, stream);
+    b.gI1.convertTo(b.t1, CV_32F, stream);
+    b.gI2.convertTo(b.t2, CV_32F, stream);
     cv::cuda::split(b.t1, b.vI1, stream);
     cv::cuda::split(b.t2, b.vI2, stream);
     cv::Scalar mssim;
@@ -765,7 +767,7 @@ cv::Scalar Bitmap::getMSSIM_CUDA_optimized( const cv::Mat& i1, const cv::Mat& i2
     return mssim;
 }
 
-float Bitmap::GetImageSimilarity(Bitmap& src_img) const{
+float Bitmap::GetImageSimilarity(Bitmap& src_img){
   if(this->width_ != src_img.Width() || this->height_ != src_img.Height()){
      std::cerr << "must be same size in cal image similarity, try to resize" << std::endl;
      src_img.Rescale(this->width_, this->height_);
@@ -781,11 +783,11 @@ float Bitmap::GetImageSimilarity(Bitmap& src_img) const{
   // const float c2 = 0.0009 * L * L;
 
   cv::Mat cv_ref_img, cv_src_img;
-  FI2MAT(this->Data(), cv_ref_img);
+  FI2MAT(Data(), cv_ref_img);
   FI2MAT(src_img.Data(), cv_src_img);
 
   cv::Scalar cv_mssim = getMSSIM_CUDA_optimized(cv_ref_img, cv_src_img, ssim_buf_);
-  mssim = cv_mssim.val[0];
+  float mssim = cv_mssim.val[0];
   return mssim;
 }
 
