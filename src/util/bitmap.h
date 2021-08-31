@@ -209,7 +209,7 @@ class Bitmap {
   static bool IsPtrGrey(FIBITMAP* data);
   static bool IsPtrRGB(FIBITMAP* data);
   static bool IsPtrSupported(FIBITMAP* data);
-  cv::Scalar getMSSIM_CUDA_optimized(const cv::Mat& i1, const cv::Mat& i2, BufferMSSIM& b);
+  cv::Scalar getMSSIM_CUDA_optimized(const cv::Mat& i1, const cv::Mat& i2);
   void FI2MAT(FIBITMAP* src, cv::Mat& dst);
   FIBitmapPtr data_;
   int width_;

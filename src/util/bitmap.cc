@@ -70,23 +70,27 @@ void Bitmap::FI2MAT(FIBITMAP* src, cv::Mat& dst)
 
     switch (fit)
     {
-    case FIT_UINT16: cv_type = DataType<ushort>::type; break;
-    case FIT_INT16: cv_type = DataType<short>::type; break;
-    case FIT_UINT32: cv_type = DataType<unsigned>::type; break;
-    case FIT_INT32: cv_type = DataType<int>::type; break;
-    case FIT_FLOAT: cv_type = DataType<float>::type; break;
-    case FIT_DOUBLE: cv_type = DataType<double>::type; break;
-    case FIT_COMPLEX: cv_type = DataType<Complex<double>>::type; break;
-    case FIT_RGB16: cv_type = DataType<Vec<ushort, 3>>::type; cv_cvt = COLOR_RGB2BGR; break;
-    case FIT_RGBA16: cv_type = DataType<Vec<ushort, 4>>::type; cv_cvt = COLOR_RGBA2BGRA; break;
-    case FIT_RGBF: cv_type = DataType<Vec<float, 3>>::type; cv_cvt = COLOR_RGB2BGR; break;
-    case FIT_RGBAF: cv_type = DataType<Vec<float, 4>>::type; cv_cvt = COLOR_RGBA2BGRA; break;
+    case FIT_UINT16: cv_type = cv::DataType<ushort>::type; break;
+    case FIT_INT16: cv_type = cv::DataType<short>::type; break;
+    case FIT_UINT32: cv_type = cv::DataType<unsigned>::type; break;
+    case FIT_INT32: cv_type = cv::DataType<int>::type; break;
+    case FIT_FLOAT: cv_type = cv::DataType<float>::type; break;
+    case FIT_DOUBLE: cv_type = cv::DataType<double>::type; break;
+    case FIT_COMPLEX: cv_type = cv::DataType<Complex<double>>::type; break;
+    case FIT_RGB16: cv_type = cv::DataType<Vec<ushort, 3>>::type; cv_cvt = cv::ColorConversionCodes
+::COLOR_RGB2BGR; break;
+    case FIT_RGBA16: cv_type = cv::DataType<Vec<ushort, 4>>::type; cv_cvt = cv::ColorConversionCodes
+::COLOR_RGBA2BGRA; break;
+    case FIT_RGBF: cv_type = cv::DataType<Vec<float, 3>>::type; cv_cvt = cv::ColorConversionCodes
+::COLOR_RGB2BGR; break;
+    case FIT_RGBAF: cv_type = cv::DataType<Vec<float, 4>>::type; cv_cvt = cv::ColorConversionCodes
+::COLOR_RGBA2BGRA; break;
     case FIT_BITMAP:
         switch (bpp) {
-        case 8: cv_type = DataType<Vec<uchar, 1>>::type; break;
-        case 16: cv_type = DataType<Vec<uchar, 2>>::type; break;
-        case 24: cv_type = DataType<Vec<uchar, 3>>::type; break;
-        case 32: cv_type = DataType<Vec<uchar, 4>>::type; break;
+        case 8: cv_type = cv::DataType<Vec<uchar, 1>>::type; break;
+        case 16: cv_type = cv::DataType<Vec<uchar, 2>>::type; break;
+        case 24: cv_type = cv::DataType<Vec<uchar, 3>>::type; break;
+        case 32: cv_type = cv::DataType<Vec<uchar, 4>>::type; break;
         default:
             // 1, 4 // Unsupported natively
             cv_type = -1;
@@ -94,7 +98,7 @@ void Bitmap::FI2MAT(FIBITMAP* src, cv::Mat& dst)
         break;
     default:
         // FIT_UNKNOWN // unknown type
-        dst = Mat(); // return empty Mat
+        dst = cv::Mat(); // return empty Mat
         return;
     }
 
@@ -103,15 +107,14 @@ void Bitmap::FI2MAT(FIBITMAP* src, cv::Mat& dst)
     int step = FreeImage_GetPitch(src);
 
     if (cv_type >= 0) {
-        dst = Mat(height, width, cv_type, FreeImage_GetBits(src), step);
+        dst = cv::Mat(height, width, cv_type, FreeImage_GetBits(src), step);
         if (cv_cvt > 0)
         {
-            cvtColor(dst, dst, cv_cvt);
+            cv::cvtColor(dst, dst, cv_cvt);
         }
     }
     else {
-
-        vector<uchar> lut;
+        std::vector<uchar> lut;
         int n = pow(2, bpp);
         for (int i = 0; i < n; ++i)
         {
@@ -122,12 +125,12 @@ void Bitmap::FI2MAT(FIBITMAP* src, cv::Mat& dst)
         BYTE* data = FreeImage_GetBits(src);
         for (int r = 0; r < height; ++r) {
             for (int c = 0; c < width; ++c) {
-                dst.at<uchar>(r, c) = saturate_cast<uchar>(lut[data[r*step + c]]);
+                dst.at<uchar>(r, c) = cv::saturate_cast<uchar>(lut[data[r*step + c]]);
             }
         }
     }
 
-    flip(dst, dst, 0);
+    cv::flip(dst, dst, 0);
 }
 
 Bitmap::Bitmap()
@@ -716,53 +719,54 @@ bool Bitmap::IsPtrSupported(FIBITMAP* data) {
   return IsPtrGrey(data) || IsPtrRGB(data);
 }
 
-cv::Scalar Bitmap::getMSSIM_CUDA_optimized( const cv::Mat& i1, const cv::Mat& i2, BufferMSSIM& b)
+cv::Scalar Bitmap::getMSSIM_CUDA_optimized( const cv::Mat& i1, const cv::Mat& i2)
 {
     const float C1 = 6.5025f, C2 = 58.5225f;
     /***************************** INITS **********************************/
-    b.gI1.upload(i1);
-    b.gI2.upload(i2);
+    ssim_buf_.gI1.upload(i1);
+    ssim_buf_.gI2.upload(i2);
     cv::cuda::Stream stream;
-    b.gI1.convertTo(b.t1, CV_32F, stream);
-    b.gI2.convertTo(b.t2, CV_32F, stream);
-    cv::cuda::split(b.t1, b.vI1, stream);
-    cv::cuda::split(b.t2, b.vI2, stream);
+    ssim_buf_.gI1.convertTo(ssim_buf_.t1, CV_32F, stream);
+    ssim_buf_.gI2.convertTo(ssim_buf_.t2, CV_32F, stream);
+    cv::cuda::split(ssim_buf_.t1, ssim_buf_.vI1, stream);
+    cv::cuda::split(ssim_buf_.t2, ssim_buf_.vI2, stream);
     cv::Scalar mssim;
-    Ptr<cv::cuda::Filter> gauss = cv::cuda::createGaussianFilter(b.vI1[0].type(), -1, cv::Size(11, 11), 1.5);
-    for( int i = 0; i < b.gI1.channels(); ++i )
+    cv::Ptr<cv::cuda::Filter> gauss = cv::cuda::createGaussianFilter(ssim_buf_.vI1[0].type(), -1, cv::Size(11, 11), 1.5);
+    
+    for( int i = 0; i < ssim_buf_.gI1.channels(); ++i )
     {
-        cv::cuda::multiply(b.vI2[i], b.vI2[i], b.I2_2, 1, -1, stream);        // I2^2
-        cv::cuda::multiply(b.vI1[i], b.vI1[i], b.I1_2, 1, -1, stream);        // I1^2
-        cv::cuda::multiply(b.vI1[i], b.vI2[i], b.I1_I2, 1, -1, stream);       // I1 * I2
-        gauss->apply(b.vI1[i], b.mu1, stream);
-        gauss->apply(b.vI2[i], b.mu2, stream);
-        cv::cuda::multiply(b.mu1, b.mu1, b.mu1_2, 1, -1, stream);
-        cv::cuda::multiply(b.mu2, b.mu2, b.mu2_2, 1, -1, stream);
-        cv::cuda::multiply(b.mu1, b.mu2, b.mu1_mu2, 1, -1, stream);
-        gauss->apply(b.I1_2, b.sigma1_2, stream);
-        cv::cuda::subtract(b.sigma1_2, b.mu1_2, b.sigma1_2, cv::cuda::GpuMat(), -1, stream);
-        //b.sigma1_2 -= b.mu1_2;  - This would result in an extra data transfer operation
-        gauss->apply(b.I2_2, b.sigma2_2, stream);
-        cv::cuda::subtract(b.sigma2_2, b.mu2_2, b.sigma2_2, cv::cuda::GpuMat(), -1, stream);
-        //b.sigma2_2 -= b.mu2_2;
-        gauss->apply(b.I1_I2, b.sigma12, stream);
-        cv::cuda::subtract(b.sigma12, b.mu1_mu2, b.sigma12, cv::cuda::GpuMat(), -1, stream);
-        //b.sigma12 -= b.mu1_mu2;
+        cv::cuda::multiply(ssim_buf_.vI2[i], ssim_buf_.vI2[i], ssim_buf_.I2_2, 1, -1, stream);        // I2^2
+        cv::cuda::multiply(ssim_buf_.vI1[i], ssim_buf_.vI1[i], ssim_buf_.I1_2, 1, -1, stream);        // I1^2
+        cv::cuda::multiply(ssim_buf_.vI1[i], ssim_buf_.vI2[i], ssim_buf_.I1_I2, 1, -1, stream);       // I1 * I2
+        gauss->apply(ssim_buf_.vI1[i], ssim_buf_.mu1, stream);
+        gauss->apply(ssim_buf_.vI2[i], ssim_buf_.mu2, stream);
+        cv::cuda::multiply(ssim_buf_.mu1, ssim_buf_.mu1, ssim_buf_.mu1_2, 1, -1, stream);
+        cv::cuda::multiply(ssim_buf_.mu2, ssim_buf_.mu2, ssim_buf_.mu2_2, 1, -1, stream);
+        cv::cuda::multiply(ssim_buf_.mu1, ssim_buf_.mu2, ssim_buf_.mu1_mu2, 1, -1, stream);
+        gauss->apply(ssim_buf_.I1_2, ssim_buf_.sigma1_2, stream);
+        cv::cuda::subtract(ssim_buf_.sigma1_2, ssim_buf_.mu1_2, ssim_buf_.sigma1_2, cv::cuda::GpuMat(), -1, stream);
+        //ssim_buf_.sigma1_2 -= ssim_buf_.mu1_2;  - This would result in an extra data transfer operation
+        gauss->apply(ssim_buf_.I2_2, ssim_buf_.sigma2_2, stream);
+        cv::cuda::subtract(ssim_buf_.sigma2_2, ssim_buf_.mu2_2, ssim_buf_.sigma2_2, cv::cuda::GpuMat(), -1, stream);
+        //ssim_buf_.sigma2_2 -= ssim_buf_.mu2_2;
+        gauss->apply(ssim_buf_.I1_I2, ssim_buf_.sigma12, stream);
+        cv::cuda::subtract(ssim_buf_.sigma12, ssim_buf_.mu1_mu2, ssim_buf_.sigma12, cv::cuda::GpuMat(), -1, stream);
+        //ssim_buf_.sigma12 -= ssim_buf_.mu1_mu2;
         //here too it would be an extra data transfer due to call of operator*(Scalar, Mat)
-        cv::cuda::multiply(b.mu1_mu2, 2, b.t1, 1, -1, stream); //b.t1 = 2 * b.mu1_mu2 + C1;
-        cv::cuda::add(b.t1, C1, b.t1, cv::cuda::GpuMat(), -1, stream);
-        cv::cuda::multiply(b.sigma12, 2, b.t2, 1, -1, stream); //b.t2 = 2 * b.sigma12 + C2;
-        cv::cuda::add(b.t2, C2, b.t2, cv::cuda::GpuMat(), -12, stream);
-        cv::cuda::multiply(b.t1, b.t2, b.t3, 1, -1, stream);     // t3 = ((2*mu1_mu2 + C1).*(2*sigma12 + C2))
-        cv::cuda::add(b.mu1_2, b.mu2_2, b.t1, cv::cuda::GpuMat(), -1, stream);
-        cv::cuda::add(b.t1, C1, b.t1, cv::cuda::GpuMat(), -1, stream);
-        cv::cuda::add(b.sigma1_2, b.sigma2_2, b.t2, cv::cuda::GpuMat(), -1, stream);
-        cv::cuda::add(b.t2, C2, b.t2, cv::cuda::GpuMat(), -1, stream);
-        cv::cuda::multiply(b.t1, b.t2, b.t1, 1, -1, stream);     // t1 =((mu1_2 + mu2_2 + C1).*(sigma1_2 + sigma2_2 + C2))
-        cv::cuda::divide(b.t3, b.t1, b.ssim_map, 1, -1, stream);      // ssim_map =  t3./t1;
+        cv::cuda::multiply(ssim_buf_.mu1_mu2, 2, ssim_buf_.t1, 1, -1, stream); //ssim_buf_.t1 = 2 * ssim_buf_.mu1_mu2 + C1;
+        cv::cuda::add(ssim_buf_.t1, C1, ssim_buf_.t1, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::multiply(ssim_buf_.sigma12, 2, ssim_buf_.t2, 1, -1, stream); //ssim_buf_.t2 = 2 * ssim_buf_.sigma12 + C2;
+        cv::cuda::add(ssim_buf_.t2, C2, ssim_buf_.t2, cv::cuda::GpuMat(), -12, stream);
+        cv::cuda::multiply(ssim_buf_.t1, ssim_buf_.t2, ssim_buf_.t3, 1, -1, stream);     // t3 = ((2*mu1_mu2 + C1).*(2*sigma12 + C2))
+        cv::cuda::add(ssim_buf_.mu1_2, ssim_buf_.mu2_2, ssim_buf_.t1, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::add(ssim_buf_.t1, C1, ssim_buf_.t1, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::add(ssim_buf_.sigma1_2, ssim_buf_.sigma2_2, ssim_buf_.t2, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::add(ssim_buf_.t2, C2, ssim_buf_.t2, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::multiply(ssim_buf_.t1, ssim_buf_.t2, ssim_buf_.t1, 1, -1, stream);     // t1 =((mu1_2 + mu2_2 + C1).*(sigma1_2 + sigma2_2 + C2))
+        cv::cuda::divide(ssim_buf_.t3, ssim_buf_.t1, ssim_buf_.ssim_map, 1, -1, stream);      // ssim_map =  t3./t1;
         stream.waitForCompletion();
-        Scalar s = cv::cuda::sum(b.ssim_map, b.buf);
-        mssim.val[i] = s.val[0] / (b.ssim_map.rows * b.ssim_map.cols);
+        cv::Scalar s = cv::cuda::sum(ssim_buf_.ssim_map, ssim_buf_.buf);
+        mssim.val[i] = s.val[0] / (ssim_buf_.ssim_map.rows * ssim_buf_.ssim_map.cols);
     }
     return mssim;
 }
@@ -786,7 +790,7 @@ float Bitmap::GetImageSimilarity(Bitmap& src_img){
   FI2MAT(Data(), cv_ref_img);
   FI2MAT(src_img.Data(), cv_src_img);
 
-  cv::Scalar cv_mssim = getMSSIM_CUDA_optimized(cv_ref_img, cv_src_img, ssim_buf_);
+  cv::Scalar cv_mssim = getMSSIM_CUDA_optimized(cv_ref_img, cv_src_img);
   float mssim = cv_mssim.val[0];
   return mssim;
 }
