@@ -396,7 +396,7 @@ void PatchMatchController::ReadProblems() {
       const float ort_max_dis = options_.ort_max_dis * M_PI / 180;
 
       const int stage_mode = static_cast<int>(std::stoll(problem_config.src_image_names[1]));
-      std::cout << "View Selection stage-mode:" << stage_mode << std:endl;
+      std::cout << "View Selection stage-mode:" << stage_mode << std::endl;
       assert(stage_mode == 1 || stage_mode == 2 || stage_mode == 3);
 
       const size_t max_num_src_images = std::stoll(problem_config.src_image_names[2]);
@@ -551,7 +551,7 @@ void PatchMatchController::ReadProblems() {
         
         std::cout << "features for each candidate view for ref image " << problem.ref_image_idx << std::endl;
         for(auto cand: candidate_views){
-          Model::Point feat = view_feats[cand.first]
+          Model::Point feat = view_feats[cand.first];
           std::cout << "candidate view: " << cand.first << " feat:(" << feat.x << ","  << feat.y << ","  << feat.z << ")" << std::endl;
         }
         std::cout << std::endl;

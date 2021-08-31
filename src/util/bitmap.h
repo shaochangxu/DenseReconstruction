@@ -47,12 +47,10 @@
 #endif
 #include <FreeImage.h>
 #include "util/string.h"
-
+#include "../lib/FLANN/flann.h"
 
 using namespace std;
 #include <opencv2/opencv.hpp>
-//using namespace cv;
-#include <opencv2/gpu/gpu.hpp>  
 
 namespace colmap {
 

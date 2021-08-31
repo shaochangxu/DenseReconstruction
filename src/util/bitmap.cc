@@ -41,6 +41,7 @@ using namespace std;
 #include "util/math.h"
 #include "util/misc.h"
 
+#include <opencv2/gpu/gpu.hpp>
 #include <opencv2/cudaarithm.hpp>
 #include <opencv2/cudafilters.hpp>
 
@@ -76,21 +77,21 @@ void Bitmap::FI2MAT(FIBITMAP* src, cv::Mat& dst)
     case FIT_INT32: cv_type = cv::DataType<int>::type; break;
     case FIT_FLOAT: cv_type = cv::DataType<float>::type; break;
     case FIT_DOUBLE: cv_type = cv::DataType<double>::type; break;
-    case FIT_COMPLEX: cv_type = cv::DataType<Complex<double>>::type; break;
-    case FIT_RGB16: cv_type = cv::DataType<Vec<ushort, 3>>::type; cv_cvt = cv::ColorConversionCodes
+    case FIT_COMPLEX: cv_type = cv::DataType<cv::Complex<double>>::type; break;
+    case FIT_RGB16: cv_type = cv::DataType<cv::Vec<ushort, 3>>::type; cv_cvt = cv::ColorConversionCodes
 ::COLOR_RGB2BGR; break;
-    case FIT_RGBA16: cv_type = cv::DataType<Vec<ushort, 4>>::type; cv_cvt = cv::ColorConversionCodes
+    case FIT_RGBA16: cv_type = cv::DataType<cv::Vec<ushort, 4>>::type; cv_cvt = cv::ColorConversionCodes
 ::COLOR_RGBA2BGRA; break;
-    case FIT_RGBF: cv_type = cv::DataType<Vec<float, 3>>::type; cv_cvt = cv::ColorConversionCodes
+    case FIT_RGBF: cv_type = cv::DataType<cv::Vec<float, 3>>::type; cv_cvt = cv::ColorConversionCodes
 ::COLOR_RGB2BGR; break;
-    case FIT_RGBAF: cv_type = cv::DataType<Vec<float, 4>>::type; cv_cvt = cv::ColorConversionCodes
+    case FIT_RGBAF: cv_type = cv::DataType<cv::Vec<float, 4>>::type; cv_cvt = cv::ColorConversionCodes
 ::COLOR_RGBA2BGRA; break;
     case FIT_BITMAP:
         switch (bpp) {
-        case 8: cv_type = cv::DataType<Vec<uchar, 1>>::type; break;
-        case 16: cv_type = cv::DataType<Vec<uchar, 2>>::type; break;
-        case 24: cv_type = cv::DataType<Vec<uchar, 3>>::type; break;
-        case 32: cv_type = cv::DataType<Vec<uchar, 4>>::type; break;
+        case 8: cv_type = cv::DataType<cv::Vec<uchar, 1>>::type; break;
+        case 16: cv_type = cv::DataType<cv::Vec<uchar, 2>>::type; break;
+        case 24: cv_type = cv::DataType<cv::Vec<uchar, 3>>::type; break;
+        case 32: cv_type = cv::DataType<cv::Vec<uchar, 4>>::type; break;
         default:
             // 1, 4 // Unsupported natively
             cv_type = -1;

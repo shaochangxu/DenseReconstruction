@@ -298,6 +298,7 @@ set(COLMAP_INCLUDE_DIRS
 
 set(COLMAP_LINK_DIRS
     ${Boost_LIBRARY_DIRS}
+    "/home/hadoop/openCV/opencv-3.4.11/build/lib/"
 )
 
 set(COLMAP_EXTERNAL_LIBRARIES
