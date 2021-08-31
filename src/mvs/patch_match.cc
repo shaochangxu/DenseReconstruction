@@ -76,6 +76,10 @@ void PatchMatchOptions::Print() const {
   PrintOption(filter_geom_consistency_max_cost);
   PrintOption(write_consistency_graph);
   PrintOption(allow_missing_files);
+  PrintOption(pos_min_dis);
+  PrintOption(pos_max_dis);
+  PrintOption(ort_min_dis);
+  PrintOption(ort_max_dis);
 }
 
 void PatchMatch::Problem::Print() const {
@@ -383,20 +387,25 @@ void PatchMatchController::ReadProblems() {
       // stage-mode 1: preform 1 stage
       // stage-mode 2: preform 2 stage
       // stage-mode 3: perform 1, 2 stage
-      const float pos_min_dis = 2;
-      const float pos_max_dis = 8;
 
-      const float ort_min_dis = M_PI / 6;
-      const float ort_max_dis = 3 * M_PI / 4;
+      // set the stage-1 threshold
+      const float pos_min_dis = options_.pos_min_dis;
+      const float pos_max_dis = options_.pos_max_dis;
+
+      const float ort_min_dis = options_.ort_min_dis * M_PI / 180;
+      const float ort_max_dis = options_.ort_max_dis * M_PI / 180;
 
       const int stage_mode = static_cast<int>(std::stoll(problem_config.src_image_names[1]));
+      std::cout << "View Selection stage-mode:" << stage_mode << std:endl;
       assert(stage_mode == 1 || stage_mode == 2 || stage_mode == 3);
 
       const size_t max_num_src_images = std::stoll(problem_config.src_image_names[2]);
-
+      
+      // get each view's n and pos
       const auto view_ort = model.ComputeViewRays();
       const auto view_pos = model.ComputeViewPos();
 
+      // candidate_views store the views selected by first stage, (img_id, score) for ref img
       std::vector<std::pair<int, float>> candidate_views;
       Model::Point ref_ort = view_ort.at(problem.ref_image_idx);
       Model::Point ref_pos = view_pos.at(problem.ref_image_idx);
@@ -409,9 +418,7 @@ void PatchMatchController::ReadProblems() {
             Model::Point src_pos = view_pos.at(image_idx);
             float pos_dis = (ref_pos - src_pos).norm();
             float ort_dis = acos( ref_ort.dot(src_ort) / (ref_ort.norm() * src_ort.norm()) );
-            //std::cout << "pos_dis:" << pos_dis << std::endl; 
-	    //std::cout << "ort_dis:" << ort_dis << std::endl;
-	    if(pos_dis > pos_min_dis && pos_dis < pos_max_dis && 
+            if(pos_dis > pos_min_dis && pos_dis < pos_max_dis && 
                 ort_dis > ort_min_dis && ort_dis < ort_max_dis){
                   float score = (pos_dis - pos_min_dis) / (pos_max_dis - pos_dis) +
                                   (ort_dis - ort_min_dis) / (ort_max_dis - ort_min_dis);
@@ -421,23 +428,30 @@ void PatchMatchController::ReadProblems() {
         }
       }
       else{
+        // use all image as candidate_views and set score to 0.0f if don't use stage 1
         for(size_t image_idx = 0; image_idx < model.images.size(); image_idx++){
-          candidate_views.emplace_back(std::make_pair(image_idx, -1.0f));
+          candidate_views.emplace_back(std::make_pair(image_idx, 0.0f));
         }
       }
 
+      std::cout << "candidate views for ref image " << problem.ref_image_idx << " after stage 1:" << std::endl;
+      std::cout << "candidate views size: " << candidate_views.size() << "each of them: ";
+      for(auto cand: candidate_views){
+        std::cout << cand.first << ",";
+      }
+      std::cout << std::endl;
+
+      // src_images store the final source views, list of (img_id, score)
       std::vector<std::pair<int, float>> src_images;
       if(stage_mode == 2 || stage_mode == 3){
         //perform stage 2 k-means
 
-        // compute features for each view
+        // 1. compute features for each view, view_feats store the features of each candidate, (img_id, (geom_dis, point_dis, img_dis))
         std::unordered_map<int, Model::Point> view_feats;
         Bitmap ref_img;
-	CHECK(ref_img.Read(workspace_->GetBitmapPath(problem.ref_image_idx), false));
-	
-        std::unordered_map<int, std::vector<int>> fs;
-        std::unordered_map<int, float> wn;
-        
+        CHECK(ref_img.Read(workspace_->GetBitmapPath(problem.ref_image_idx), false));
+      
+        // compute all view center 
         std::vector<Model::Point> proj_centers(model.images.size());
         for (size_t image_idx = 0; image_idx < model.images.size(); ++image_idx) {
           const auto& image = model.images[image_idx];
@@ -450,12 +464,19 @@ void PatchMatchController::ReadProblems() {
           proj_centers[image_idx] = C;
         }
 
+        //(img_id, {point_id}), the points in each img_id
+        std::unordered_map<int, std::vector<int>> fs;
+        //(point_id, score), compute each score for point according to angle between all views contain it
+        std::unordered_map<int, float> wn;
+
+        // compute fs and wn
         for (size_t p_id = 0; p_id < model.points.size(); p_id++) {
           auto point = model.points[p_id];
-
+          // compute fs
           for (size_t i = 0; i < point.track.size(); ++i) {
             const int image_idx1 = point.track[i];
             if(image_idx1 == problem.ref_image_idx){
+              // this point is in ref_img, then store it
               for(size_t j = 0; j < point.track.size(); ++j){
                 if(i != j){
                   fs[point.track[j]].emplace_back(p_id);
@@ -464,7 +485,7 @@ void PatchMatchController::ReadProblems() {
               break;
             }
           }
-
+          // compute the wn
           float score = 1.0f;
           for (size_t i = 0; i < point.track.size(); ++i) {
             for(size_t j = 0; j < i; ++j){
@@ -479,7 +500,8 @@ void PatchMatchController::ReadProblems() {
         
         const float* ref_K = model.images[problem.ref_image_idx].GetK();
         const float* ref_P = model.images[problem.ref_image_idx].GetP();
-              
+        
+        // compute features for each view
         for(size_t image_idx = 0; image_idx < model.images.size(); image_idx++){
           if (static_cast<int>(image_idx) != problem.ref_image_idx) {
             // geom dis score
@@ -521,55 +543,73 @@ void PatchMatchController::ReadProblems() {
             // img similarity score
             Bitmap src_img;
             CHECK(src_img.Read(workspace_->GetBitmapPath(image_idx), false));
-            float img_dis = 1 - ref_img.GetImageSimilarity(src_img);
-	    //float img_dis = 0.0f;
+            //float img_dis = 1 - ref_img.GetImageSimilarity(src_img);
+            float img_dis = 0.0f;
             view_feats[static_cast<int>(image_idx)] = Model::Point(geom_dis, point_dis, img_dis);
-	  }
+          }
         }
+        
+        std::cout << "features for each candidate view for ref image " << problem.ref_image_idx << std::endl;
+        for(auto cand: candidate_views){
+          Model::Point feat = view_feats[cand.first]
+          std::cout << "candidate view: " << cand.first << " feat:(" << feat.x << ","  << feat.y << ","  << feat.z << ")" << std::endl;
+        }
+        std::cout << std::endl;
+
         // k means
         size_t k = std::min(candidate_views.size(), max_num_src_images);
+        std::cout << "src view size for ref image " << problem.ref_image_idx << " is " << k << std::endl;
         float a1 = 1.0f;
         float a2 = 1.0f;
         float a3 = 1.0f;
         
+        // center_ids: cand_id, use candidate_views[center_ids[i]].first to get img_id
         std::vector<int> center_ids(candidate_views.size());
-	std::iota(center_ids.begin(), center_ids.end(), 0);
-	std::random_shuffle (center_ids.begin(), center_ids.end());
-	center_ids.reserve(k);
+        std::iota(center_ids.begin(), center_ids.end(), 0);
+        std::random_shuffle (center_ids.begin(), center_ids.end());
+        center_ids.reserve(k);
 
+        //store the view belong to each category's. (center_id, {cand_id})
         std::unordered_map<int, std::vector<int>> token;
-        std::cout << "candidate size:" << candidate_views.size() << std::endl;
-	int iter = 0;
+        
+        int iter = 0;
         while(iter < 5){
+          std::cout << "Iter" << iter << ":"<< std::endl;
+          std::cout << "source views: " << candidate_views.size();
+          for(auto cand_id: center_ids){
+            std::cout << candidate_views[cand_id].first << ",";
+          }
+          std::cout << std::endl;
+
           iter++;
+
           // change token with new center
           for(size_t i = 0; i < candidate_views.size(); i++){
             int minIndex = -1;
             float minDis = INFINITY;
-
+            Model::Point f = view_feats[candidate_views[i].first];
+            // find the min cost center
             for(size_t j = 0; j < k; j++){
               Model::Point center_f = view_feats[candidate_views[center_ids[j]].first];
-              Model::Point f = view_feats[candidate_views[i].first];
               float dis = a1 * std::abs(center_f.x - f.x) + a2 * std::abs(center_f.y - f.y) + a3 * std::abs(center_f.z - f.z);
-              //std::cout << i << "," <<j << ","<<dis << ";";
-	      if(dis < minDis){
+              if(dis < minDis){
                   minDis = dis;
                   minIndex = j;
               }
             }
- 	    //std::cout << i << " belong to " << minIndex<<std::endl;
+            //std::cout << "view" << candidate_views[i].first << " belongs to " << minIndex <<std::endl;
             token[minIndex].emplace_back(i);
           }
-          // updata new center
 
+          // updata new center
           for(size_t j = 0; j < k; j++){
+            // compute the avg center each category
             Model::Point new_center_f(0.0f, 0.0f, 0.0f);
-            //std::cout << token[j].size() << std::endl;
             for(auto cand_id: token[j]){
               new_center_f = new_center_f + view_feats[candidate_views[cand_id].first];
             }
             new_center_f = new_center_f / ((float)token[j].size());
-		//std::cout <<"here2" <<std::endl;
+            
             // use the closest one as new center
             int minIndex = -1;
             float minDis = INFINITY;
@@ -581,11 +621,17 @@ void PatchMatchController::ReadProblems() {
                   minIndex = token_id;
               }
             }
-//std::cout <<"here3" <<std::endl;
             center_ids[j] = token[j][minIndex];
           }
         }
 
+        std::cout << "Final source views after stage 2: " << candidate_views.size();
+        for(auto cand_id: center_ids){
+          std::cout << candidate_views[cand_id].first << ",";
+        }
+        std::cout << std::endl;
+
+        // set the src view
         for (size_t i = 0; i < k; ++i) {
           problem.src_image_idxs.push_back(candidate_views[center_ids[i]].first);
         }

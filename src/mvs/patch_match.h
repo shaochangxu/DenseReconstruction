@@ -140,6 +140,14 @@ struct PatchMatchOptions {
   // Whether to write the consistency graph.
   bool write_consistency_graph = false;
 
+  // Two-Stage Para
+  float pos_min_dis = 2;
+  float pos_max_dis = 8;
+
+  float ort_min_dis = 30;
+  float ort_max_dis = 135;
+
+
   void Print() const;
   bool Check() const {
     if (depth_min != -1.0f || depth_max != -1.0f) {

@@ -648,6 +648,15 @@ void OptionManager::AddPatchMatchStereoOptions() {
                               &patch_match_stereo->allow_missing_files);
   AddAndRegisterDefaultOption("PatchMatchStereo.write_consistency_graph",
                               &patch_match_stereo->write_consistency_graph);
+
+  AddAndRegisterDefaultOption("PatchMatchStereo.pos_min_dis",
+                              &patch_match_stereo->pos_min_dis);
+  AddAndRegisterDefaultOption("PatchMatchStereo.pos_max_dis",
+                              &patch_match_stereo->pos_max_dis);
+  AddAndRegisterDefaultOption("PatchMatchStereo.ort_min_dis",
+                              &patch_match_stereo->ort_min_dis);
+  AddAndRegisterDefaultOption("PatchMatchStereo.ort_max_dis",
+                              &patch_match_stereo->ort_max_dis);
 }
 
 void OptionManager::AddStereoFusionOptions() {
