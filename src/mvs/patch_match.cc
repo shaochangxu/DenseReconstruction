@@ -383,11 +383,11 @@ void PatchMatchController::ReadProblems() {
       // stage-mode 1: preform 1 stage
       // stage-mode 2: preform 2 stage
       // stage-mode 3: perform 1, 2 stage
-      const float pos_min_dis = 3;
-      const float pos_max_dis = 7;
+      const float pos_min_dis = 2;
+      const float pos_max_dis = 8;
 
-      const float ort_min_dis = M_PI / 4;
-      const float ort_max_dis = 2 * M_PI / 3;
+      const float ort_min_dis = M_PI / 6;
+      const float ort_max_dis = 3 * M_PI / 4;
 
       const int stage_mode = static_cast<int>(std::stoll(problem_config.src_image_names[1]));
       assert(stage_mode == 1 || stage_mode == 2 || stage_mode == 3);

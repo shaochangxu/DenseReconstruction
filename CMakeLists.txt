@@ -139,7 +139,13 @@ if(CGAL_FOUND)
     message(STATUS "  Libraries : ${CGAL_LIBRARY}")
 endif()
 
-
+find_package(OpenCV REQUIRED) 
+if(OpenCV_FOUND)
+	message(STATUS "OpenCV library status:")
+	message(STATUS "    version: ${OpenCV_VERSION}")
+	message(STATUS "    libraries: ${OpenCV_LIBS}")
+	message(STATUS "    include path: ${OpenCV_INCLUDE_DIRS}")
+endif()
 ################################################################################
 # Compiler specific configuration
 ################################################################################
@@ -287,6 +293,7 @@ set(COLMAP_INCLUDE_DIRS
     ${FREEIMAGE_INCLUDE_DIRS}
     ${CERES_INCLUDE_DIRS}
     ${GLEW_INCLUDE_DIRS}
+    ${OpenCV_INCLUDE_DIRS}
 )
 
 set(COLMAP_LINK_DIRS
@@ -301,7 +308,8 @@ set(COLMAP_EXTERNAL_LIBRARIES
     ${GLOG_LIBRARIES}
     ${FREEIMAGE_LIBRARIES}
     ${CERES_LIBRARIES}
-    ${OPENGL_LIBRARIES}
+    ${OPENGL_LIBRARIES} 
+    ${OpenCV_LIBS}
 )
 
 if(OPENMP_FOUND)

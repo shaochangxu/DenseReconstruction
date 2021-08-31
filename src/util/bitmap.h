@@ -45,7 +45,6 @@
 #include <Windows.h>
 #endif
 #include <FreeImage.h>
-
 #include "util/string.h"
 
 namespace colmap {

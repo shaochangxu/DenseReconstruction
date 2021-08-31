@@ -29,10 +29,12 @@
 //
 // Author: Johannes L. Schoenberger (jsch-at-demuc-dot-de)
 
+using namespace std;
 #include "util/bitmap.h"
 
 #include <regex>
 #include <unordered_map>
+#include <opencv2/gpu/gpu.hpp>  
 
 #include "VLFeat/imopv.h"
 #include "base/camera_database.h"
