@@ -34,13 +34,97 @@ using namespace std;
 
 #include <regex>
 #include <unordered_map>
-#include <opencv2/gpu/gpu.hpp>  
 
 #include "VLFeat/imopv.h"
 #include "base/camera_database.h"
 #include "util/logging.h"
 #include "util/math.h"
 #include "util/misc.h"
+
+
+void FI2MAT(FIBITMAP* src, Mat& dst)
+{
+    //FIT_BITMAP    //standard image : 1 - , 4 - , 8 - , 16 - , 24 - , 32 - bit
+    //FIT_UINT16    //array of unsigned short : unsigned 16 - bit
+    //FIT_INT16     //array of short : signed 16 - bit
+    //FIT_UINT32    //array of unsigned long : unsigned 32 - bit
+    //FIT_INT32     //array of long : signed 32 - bit
+    //FIT_FLOAT     //array of float : 32 - bit IEEE floating point
+    //FIT_DOUBLE    //array of double : 64 - bit IEEE floating point
+    //FIT_COMPLEX   //array of FICOMPLEX : 2 x 64 - bit IEEE floating point
+    //FIT_RGB16     //48 - bit RGB image : 3 x 16 - bit
+    //FIT_RGBA16    //64 - bit RGBA image : 4 x 16 - bit
+    //FIT_RGBF      //96 - bit RGB float image : 3 x 32 - bit IEEE floating point
+    //FIT_RGBAF     //128 - bit RGBA float image : 4 x 32 - bit IEEE floating point
+
+    int bpp = FreeImage_GetBPP(src);
+    FREE_IMAGE_TYPE fit = FreeImage_GetImageType(src);
+
+    int cv_type = -1;
+    int cv_cvt = -1;
+
+    switch (fit)
+    {
+    case FIT_UINT16: cv_type = DataType<ushort>::type; break;
+    case FIT_INT16: cv_type = DataType<short>::type; break;
+    case FIT_UINT32: cv_type = DataType<unsigned>::type; break;
+    case FIT_INT32: cv_type = DataType<int>::type; break;
+    case FIT_FLOAT: cv_type = DataType<float>::type; break;
+    case FIT_DOUBLE: cv_type = DataType<double>::type; break;
+    case FIT_COMPLEX: cv_type = DataType<Complex<double>>::type; break;
+    case FIT_RGB16: cv_type = DataType<Vec<ushort, 3>>::type; cv_cvt = COLOR_RGB2BGR; break;
+    case FIT_RGBA16: cv_type = DataType<Vec<ushort, 4>>::type; cv_cvt = COLOR_RGBA2BGRA; break;
+    case FIT_RGBF: cv_type = DataType<Vec<float, 3>>::type; cv_cvt = COLOR_RGB2BGR; break;
+    case FIT_RGBAF: cv_type = DataType<Vec<float, 4>>::type; cv_cvt = COLOR_RGBA2BGRA; break;
+    case FIT_BITMAP:
+        switch (bpp) {
+        case 8: cv_type = DataType<Vec<uchar, 1>>::type; break;
+        case 16: cv_type = DataType<Vec<uchar, 2>>::type; break;
+        case 24: cv_type = DataType<Vec<uchar, 3>>::type; break;
+        case 32: cv_type = DataType<Vec<uchar, 4>>::type; break;
+        default:
+            // 1, 4 // Unsupported natively
+            cv_type = -1;
+        }
+        break;
+    default:
+        // FIT_UNKNOWN // unknown type
+        dst = Mat(); // return empty Mat
+        return;
+    }
+
+    int width = FreeImage_GetWidth(src);
+    int height = FreeImage_GetHeight(src);
+    int step = FreeImage_GetPitch(src);
+
+    if (cv_type >= 0) {
+        dst = Mat(height, width, cv_type, FreeImage_GetBits(src), step);
+        if (cv_cvt > 0)
+        {
+            cvtColor(dst, dst, cv_cvt);
+        }
+    }
+    else {
+
+        vector<uchar> lut;
+        int n = pow(2, bpp);
+        for (int i = 0; i < n; ++i)
+        {
+            lut.push_back(static_cast<uchar>((255 / (n - 1))*i));
+        }
+
+        FIBITMAP* palletized = FreeImage_ConvertTo8Bits(src);
+        BYTE* data = FreeImage_GetBits(src);
+        for (int r = 0; r < height; ++r) {
+            for (int c = 0; c < width; ++c) {
+                dst.at<uchar>(r, c) = saturate_cast<uchar>(lut[data[r*step + c]]);
+            }
+        }
+    }
+
+    flip(dst, dst, 0);
+}
+
 
 namespace colmap {
 
@@ -630,67 +714,80 @@ bool Bitmap::IsPtrSupported(FIBITMAP* data) {
   return IsPtrGrey(data) || IsPtrRGB(data);
 }
 
+cv::Scalar Bitmap::getMSSIM_CUDA_optimized( const cv::Mat& i1, const cv::Mat& i2, BufferMSSIM& b)
+{
+    const float C1 = 6.5025f, C2 = 58.5225f;
+    /***************************** INITS **********************************/
+    b.gI1.upload(i1);
+    b.gI2.upload(i2);
+    cv::cuda::Stream stream;
+    b.gI1.convertTo(b.t1, cv::CV_32F, stream);
+    b.gI2.convertTo(b.t2, cv::CV_32F, stream);
+    cv::cuda::split(b.t1, b.vI1, stream);
+    cv::cuda::split(b.t2, b.vI2, stream);
+    cv::Scalar mssim;
+    Ptr<cv::cuda::Filter> gauss = cv::cuda::createGaussianFilter(b.vI1[0].type(), -1, cv::Size(11, 11), 1.5);
+    for( int i = 0; i < b.gI1.channels(); ++i )
+    {
+        cv::cuda::multiply(b.vI2[i], b.vI2[i], b.I2_2, 1, -1, stream);        // I2^2
+        cv::cuda::multiply(b.vI1[i], b.vI1[i], b.I1_2, 1, -1, stream);        // I1^2
+        cv::cuda::multiply(b.vI1[i], b.vI2[i], b.I1_I2, 1, -1, stream);       // I1 * I2
+        gauss->apply(b.vI1[i], b.mu1, stream);
+        gauss->apply(b.vI2[i], b.mu2, stream);
+        cv::cuda::multiply(b.mu1, b.mu1, b.mu1_2, 1, -1, stream);
+        cv::cuda::multiply(b.mu2, b.mu2, b.mu2_2, 1, -1, stream);
+        cv::cuda::multiply(b.mu1, b.mu2, b.mu1_mu2, 1, -1, stream);
+        gauss->apply(b.I1_2, b.sigma1_2, stream);
+        cv::cuda::subtract(b.sigma1_2, b.mu1_2, b.sigma1_2, cv::cuda::GpuMat(), -1, stream);
+        //b.sigma1_2 -= b.mu1_2;  - This would result in an extra data transfer operation
+        gauss->apply(b.I2_2, b.sigma2_2, stream);
+        cv::cuda::subtract(b.sigma2_2, b.mu2_2, b.sigma2_2, cv::cuda::GpuMat(), -1, stream);
+        //b.sigma2_2 -= b.mu2_2;
+        gauss->apply(b.I1_I2, b.sigma12, stream);
+        cv::cuda::subtract(b.sigma12, b.mu1_mu2, b.sigma12, cv::cuda::GpuMat(), -1, stream);
+        //b.sigma12 -= b.mu1_mu2;
+        //here too it would be an extra data transfer due to call of operator*(Scalar, Mat)
+        cv::cuda::multiply(b.mu1_mu2, 2, b.t1, 1, -1, stream); //b.t1 = 2 * b.mu1_mu2 + C1;
+        cv::cuda::add(b.t1, C1, b.t1, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::multiply(b.sigma12, 2, b.t2, 1, -1, stream); //b.t2 = 2 * b.sigma12 + C2;
+        cv::cuda::add(b.t2, C2, b.t2, cv::cuda::GpuMat(), -12, stream);
+        cv::cuda::multiply(b.t1, b.t2, b.t3, 1, -1, stream);     // t3 = ((2*mu1_mu2 + C1).*(2*sigma12 + C2))
+        cv::cuda::add(b.mu1_2, b.mu2_2, b.t1, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::add(b.t1, C1, b.t1, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::add(b.sigma1_2, b.sigma2_2, b.t2, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::add(b.t2, C2, b.t2, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::multiply(b.t1, b.t2, b.t1, 1, -1, stream);     // t1 =((mu1_2 + mu2_2 + C1).*(sigma1_2 + sigma2_2 + C2))
+        cv::cuda::divide(b.t3, b.t1, b.ssim_map, 1, -1, stream);      // ssim_map =  t3./t1;
+        stream.waitForCompletion();
+        Scalar s = cv::cuda::sum(b.ssim_map, b.buf);
+        mssim.val[i] = s.val[0] / (b.ssim_map.rows * b.ssim_map.cols);
+    }
+    return mssim;
+}
+
 float Bitmap::GetImageSimilarity(Bitmap& src_img) const{
   if(this->width_ != src_img.Width() || this->height_ != src_img.Height()){
      std::cerr << "must be same size in cal image similarity, try to resize" << std::endl;
      src_img.Rescale(this->width_, this->height_);
   }
 
-  int patch_width = 21;
-  int patch_height = 21;
+  // int patch_width = 21;
+  // int patch_height = 21;
 
-  float mssim = 0.0f;
-  int patch_num = 0;
-  const int L = 255;
-  const float c1 = 0.0001 * L * L;
-  const float c2 = 0.0009 * L * L;
+  // float mssim = 0.0f;
+  // int patch_num = 0;
+  // const int L = 255;
+  // const float c1 = 0.0001 * L * L;
+  // const float c2 = 0.0009 * L * L;
 
-  BitmapColor<uint8_t> ref_color;
-  BitmapColor<uint8_t> src_color;
-  
-  for(int r = 0; r < this->height_; r += patch_height){
-    for(int c = 0; c < this->width_; c +=  patch_width){
-      patch_num++;
-      
-      float sum_x = 0.0f;
-      float sum_y = 0.0f;
-      float sum_xx = 0.0f;
-      float sum_yy = 0.0f;
-      float sum_xy = 0.0f;
-      int pixel_num = (std::min(r + patch_height, this->height_) - r) * (std::min(c + patch_width, this->width_) - c);
-      
-      for(int pr = r; pr < std::min(r + patch_height, this->height_); pr++){
-        for(int pc = c; pr < std::min(c + patch_width, this->width_); pc++){
-	  this->GetPixel(pc, pr, &ref_color);
-          src_img.GetPixel(pc, pr, &src_color);
-          float x =  (float)(ref_color.r);
-          float y =  (float)(src_color.r);
+  cv::Mat cv_ref_img, cv_src_img;
+  FI2MAT(this->Data(), cv_ref_img);
+  FI2MAT(src_img.Data(), cv_src_img);
 
-          sum_x += x;
-          sum_y += y;
-          sum_xx += x * x;
-          sum_yy += y * y;
-          sum_xy += x * y;
-        }
-      }
-      float mu_x = sum_x / pixel_num;
-      float mu_y = sum_y / pixel_num;
-      float sigma_x = sum_xx / pixel_num - mu_x * mu_x;
-      float sigma_y = sum_yy / pixel_num - mu_y * mu_y;
-      float sigma_xy = sum_xy / pixel_num - mu_x * mu_y;
-      float ssim = ((2 * mu_x * mu_y + c1) * (2 * sigma_xy + c2)) /
-                     ((mu_x * mu_x + mu_y * mu_y + c1) * (sigma_x + sigma_y + c2));
-      mssim += ssim;
-    }
-  }
-
-  mssim = mssim / patch_num;
-
+  cv::Scalar cv_mssim = getMSSIM_CUDA_optimized(cv_ref_img, cv_src_img, ssim_buf_);
+  mssim = cv_mssim.val[0];
   return mssim;
 }
-
-
-
 
 float JetColormap::Red(const float gray) { return Base(gray - 0.25f); }
 
