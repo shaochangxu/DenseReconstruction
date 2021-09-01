@@ -29,20 +29,110 @@
 //
 // Author: Johannes L. Schoenberger (jsch-at-demuc-dot-de)
 
+using namespace std;
 #include "util/bitmap.h"
 
+#include <regex>
 #include <unordered_map>
 
-#include <boost/filesystem/operations.hpp>
-#include <boost/regex.hpp>
-
-#include "base/camera_database.h"
 #include "VLFeat/imopv.h"
+#include "base/camera_database.h"
 #include "util/logging.h"
 #include "util/math.h"
 #include "util/misc.h"
 
-namespace colmap {
+#include <opencv2/gpu/gpu.hpp>
+#include <opencv2/cudaarithm.hpp>
+#include <opencv2/cudafilters.hpp>
+
+
+namespace colmap{
+
+void Bitmap::FI2MAT(FIBITMAP* src, cv::Mat& dst)
+{
+    //FIT_BITMAP    //standard image : 1 - , 4 - , 8 - , 16 - , 24 - , 32 - bit
+    //FIT_UINT16    //array of unsigned short : unsigned 16 - bit
+    //FIT_INT16     //array of short : signed 16 - bit
+    //FIT_UINT32    //array of unsigned long : unsigned 32 - bit
+    //FIT_INT32     //array of long : signed 32 - bit
+    //FIT_FLOAT     //array of float : 32 - bit IEEE floating point
+    //FIT_DOUBLE    //array of double : 64 - bit IEEE floating point
+    //FIT_COMPLEX   //array of FICOMPLEX : 2 x 64 - bit IEEE floating point
+    //FIT_RGB16     //48 - bit RGB image : 3 x 16 - bit
+    //FIT_RGBA16    //64 - bit RGBA image : 4 x 16 - bit
+    //FIT_RGBF      //96 - bit RGB float image : 3 x 32 - bit IEEE floating point
+    //FIT_RGBAF     //128 - bit RGBA float image : 4 x 32 - bit IEEE floating point
+
+    int bpp = FreeImage_GetBPP(src);
+    FREE_IMAGE_TYPE fit = FreeImage_GetImageType(src);
+
+    int cv_type = -1;
+    int cv_cvt = -1;
+
+    switch (fit)
+    {
+    case FIT_UINT16: cv_type = cv::DataType<ushort>::type; break;
+    case FIT_INT16: cv_type = cv::DataType<short>::type; break;
+    case FIT_UINT32: cv_type = cv::DataType<unsigned>::type; break;
+    case FIT_INT32: cv_type = cv::DataType<int>::type; break;
+    case FIT_FLOAT: cv_type = cv::DataType<float>::type; break;
+    case FIT_DOUBLE: cv_type = cv::DataType<double>::type; break;
+    case FIT_COMPLEX: cv_type = cv::DataType<cv::Complex<double>>::type; break;
+    case FIT_RGB16: cv_type = cv::DataType<cv::Vec<ushort, 3>>::type; cv_cvt = cv::ColorConversionCodes
+::COLOR_RGB2BGR; break;
+    case FIT_RGBA16: cv_type = cv::DataType<cv::Vec<ushort, 4>>::type; cv_cvt = cv::ColorConversionCodes
+::COLOR_RGBA2BGRA; break;
+    case FIT_RGBF: cv_type = cv::DataType<cv::Vec<float, 3>>::type; cv_cvt = cv::ColorConversionCodes
+::COLOR_RGB2BGR; break;
+    case FIT_RGBAF: cv_type = cv::DataType<cv::Vec<float, 4>>::type; cv_cvt = cv::ColorConversionCodes
+::COLOR_RGBA2BGRA; break;
+    case FIT_BITMAP:
+        switch (bpp) {
+        case 8: cv_type = cv::DataType<cv::Vec<uchar, 1>>::type; break;
+        case 16: cv_type = cv::DataType<cv::Vec<uchar, 2>>::type; break;
+        case 24: cv_type = cv::DataType<cv::Vec<uchar, 3>>::type; break;
+        case 32: cv_type = cv::DataType<cv::Vec<uchar, 4>>::type; break;
+        default:
+            // 1, 4 // Unsupported natively
+            cv_type = -1;
+        }
+        break;
+    default:
+        // FIT_UNKNOWN // unknown type
+        dst = cv::Mat(); // return empty Mat
+        return;
+    }
+
+    int width = FreeImage_GetWidth(src);
+    int height = FreeImage_GetHeight(src);
+    int step = FreeImage_GetPitch(src);
+
+    if (cv_type >= 0) {
+        dst = cv::Mat(height, width, cv_type, FreeImage_GetBits(src), step);
+        if (cv_cvt > 0)
+        {
+            cv::cvtColor(dst, dst, cv_cvt);
+        }
+    }
+    else {
+        std::vector<uchar> lut;
+        int n = pow(2, bpp);
+        for (int i = 0; i < n; ++i)
+        {
+            lut.push_back(static_cast<uchar>((255 / (n - 1))*i));
+        }
+
+        FIBITMAP* palletized = FreeImage_ConvertTo8Bits(src);
+        BYTE* data = FreeImage_GetBits(src);
+        for (int r = 0; r < height; ++r) {
+            for (int c = 0; c < width; ++c) {
+                dst.at<uchar>(r, c) = cv::saturate_cast<uchar>(lut[data[r*step + c]]);
+            }
+        }
+    }
+
+    cv::flip(dst, dst, 0);
+}
 
 Bitmap::Bitmap()
     : data_(nullptr, &FreeImage_Unload), width_(0), height_(0), channels_(0) {}
@@ -281,6 +371,36 @@ bool Bitmap::InterpolateBilinear(const double x, const double y,
   return false;
 }
 
+bool Bitmap::ExifCameraModel(std::string* camera_model) const {
+  // Read camera make and model
+  std::string make_str;
+  std::string model_str;
+  std::string focal_length;
+  *camera_model = "";
+  if (ReadExifTag(FIMD_EXIF_MAIN, "Make", &make_str)) {
+    *camera_model += (make_str + "-");
+  } else {
+    *camera_model = "";
+    return false;
+  }
+  if (ReadExifTag(FIMD_EXIF_MAIN, "Model", &model_str)) {
+    *camera_model += (model_str + "-");
+  } else {
+    *camera_model = "";
+    return false;
+  }
+  if (ReadExifTag(FIMD_EXIF_EXIF, "FocalLengthIn35mmFilm", &focal_length)) {
+    *camera_model += (focal_length + "-");
+  } else if (ReadExifTag(FIMD_EXIF_EXIF, "FocalLength", &focal_length)) {
+    *camera_model += (focal_length + "-");
+  } else {
+    *camera_model = "";
+    return false;
+  }
+  *camera_model += (std::to_string(width_) + "x" + std::to_string(height_));
+  return true;
+}
+
 bool Bitmap::ExifFocalLength(double* focal_length) const {
   const double max_size = std::max(width_, height_);
 
@@ -291,9 +411,9 @@ bool Bitmap::ExifFocalLength(double* focal_length) const {
   std::string focal_length_35mm_str;
   if (ReadExifTag(FIMD_EXIF_EXIF, "FocalLengthIn35mmFilm",
                   &focal_length_35mm_str)) {
-    const boost::regex regex(".*?([0-9.]+).*?mm.*?");
-    boost::cmatch result;
-    if (boost::regex_search(focal_length_35mm_str.c_str(), result, regex)) {
+    const std::regex regex(".*?([0-9.]+).*?mm.*?");
+    std::cmatch result;
+    if (std::regex_search(focal_length_35mm_str.c_str(), result, regex)) {
       const double focal_length_35 = std::stold(result[1]);
       if (focal_length_35 > 0) {
         *focal_length = focal_length_35 / 35.0 * max_size;
@@ -308,9 +428,9 @@ bool Bitmap::ExifFocalLength(double* focal_length) const {
 
   std::string focal_length_str;
   if (ReadExifTag(FIMD_EXIF_EXIF, "FocalLength", &focal_length_str)) {
-    boost::regex regex(".*?([0-9.]+).*?mm");
-    boost::cmatch result;
-    if (boost::regex_search(focal_length_str.c_str(), result, regex)) {
+    std::regex regex(".*?([0-9.]+).*?mm");
+    std::cmatch result;
+    if (std::regex_search(focal_length_str.c_str(), result, regex)) {
       const double focal_length_mm = std::stold(result[1]);
 
       // Lookup sensor width in database.
@@ -334,11 +454,11 @@ bool Bitmap::ExifFocalLength(double* focal_length) const {
           ReadExifTag(FIMD_EXIF_EXIF, "FocalPlaneXResolution", &x_res_str) &&
           ReadExifTag(FIMD_EXIF_EXIF, "FocalPlaneResolutionUnit",
                       &res_unit_str)) {
-        regex = boost::regex(".*?([0-9.]+).*?");
-        if (boost::regex_search(pixel_x_dim_str.c_str(), result, regex)) {
+        regex = std::regex(".*?([0-9.]+).*?");
+        if (std::regex_search(pixel_x_dim_str.c_str(), result, regex)) {
           const double pixel_x_dim = std::stold(result[1]);
-          regex = boost::regex(".*?([0-9.]+).*?/.*?([0-9.]+).*?");
-          if (boost::regex_search(x_res_str.c_str(), result, regex)) {
+          regex = std::regex(".*?([0-9.]+).*?/.*?([0-9.]+).*?");
+          if (std::regex_search(x_res_str.c_str(), result, regex)) {
             const double x_res = std::stold(result[2]) / std::stold(result[1]);
             // Use PixelXDimension instead of actual width of image, since
             // the image might have been resized, but the EXIF data preserved.
@@ -363,14 +483,26 @@ bool Bitmap::ExifFocalLength(double* focal_length) const {
 
 bool Bitmap::ExifLatitude(double* latitude) const {
   std::string str;
+  double sign = 1.0;
+  if (ReadExifTag(FIMD_EXIF_GPS, "GPSLatitudeRef", &str)) {
+    StringTrim(&str);
+    StringToLower(&str);
+    if (!str.empty() && str[0] == 's') {
+        sign = -1.0;
+    }
+  }
   if (ReadExifTag(FIMD_EXIF_GPS, "GPSLatitude", &str)) {
-    const boost::regex regex(".*?([0-9.]+):([0-9.]+):([0-9.]+).*?");
-    boost::cmatch result;
-    if (boost::regex_search(str.c_str(), result, regex)) {
+    const std::regex regex(".*?([0-9.]+):([0-9.]+):([0-9.]+).*?");
+    std::cmatch result;
+    if (std::regex_search(str.c_str(), result, regex)) {
       const double hours = std::stold(result[1]);
       const double minutes = std::stold(result[2]);
       const double seconds = std::stold(result[3]);
-      *latitude = hours + minutes / 60.0 + seconds / 3600.0;
+      double value = hours + minutes / 60.0 + seconds / 3600.0;
+      if (value > 0 && sign < 0) {
+        value *= sign;
+      }
+      *latitude = value;
       return true;
     }
   }
@@ -379,14 +511,26 @@ bool Bitmap::ExifLatitude(double* latitude) const {
 
 bool Bitmap::ExifLongitude(double* longitude) const {
   std::string str;
+  double sign = 1.0;
+  if (ReadExifTag(FIMD_EXIF_GPS, "GPSLongitudeRef", &str)) {
+    StringTrim(&str);
+    StringToLower(&str);
+    if (!str.empty() && str[0] == 'w') {
+      sign = -1.0;
+    }
+  }
   if (ReadExifTag(FIMD_EXIF_GPS, "GPSLongitude", &str)) {
-    const boost::regex regex(".*?([0-9.]+):([0-9.]+):([0-9.]+).*?");
-    boost::cmatch result;
-    if (boost::regex_search(str.c_str(), result, regex)) {
+    const std::regex regex(".*?([0-9.]+):([0-9.]+):([0-9.]+).*?");
+    std::cmatch result;
+    if (std::regex_search(str.c_str(), result, regex)) {
       const double hours = std::stold(result[1]);
       const double minutes = std::stold(result[2]);
       const double seconds = std::stold(result[3]);
-      *longitude = hours + minutes / 60.0 + seconds / 3600.0;
+      double value = hours + minutes / 60.0 + seconds / 3600.0;
+      if (value > 0 && sign < 0) {
+        value *= sign;
+      }
+      *longitude = value;
       return true;
     }
   }
@@ -396,9 +540,9 @@ bool Bitmap::ExifLongitude(double* longitude) const {
 bool Bitmap::ExifAltitude(double* altitude) const {
   std::string str;
   if (ReadExifTag(FIMD_EXIF_GPS, "GPSAltitude", &str)) {
-    const boost::regex regex(".*?([0-9.]+).*?/.*?([0-9.]+).*?");
-    boost::cmatch result;
-    if (boost::regex_search(str.c_str(), result, regex)) {
+    const std::regex regex(".*?([0-9.]+).*?/.*?([0-9.]+).*?");
+    std::cmatch result;
+    if (std::regex_search(str.c_str(), result, regex)) {
       *altitude = std::stold(result[1]) / std::stold(result[2]);
       return true;
     }
@@ -574,6 +718,83 @@ bool Bitmap::IsPtrRGB(FIBITMAP* data) {
 
 bool Bitmap::IsPtrSupported(FIBITMAP* data) {
   return IsPtrGrey(data) || IsPtrRGB(data);
+}
+
+cv::Scalar Bitmap::getMSSIM_CUDA_optimized( const cv::Mat& i1, const cv::Mat& i2)
+{
+    const float C1 = 6.5025f, C2 = 58.5225f;
+    /***************************** INITS **********************************/
+    ssim_buf_.gI1.upload(i1);
+    ssim_buf_.gI2.upload(i2);
+    cv::cuda::Stream stream;
+    ssim_buf_.gI1.convertTo(ssim_buf_.t1, CV_32F, stream);
+    ssim_buf_.gI2.convertTo(ssim_buf_.t2, CV_32F, stream);
+    cv::cuda::split(ssim_buf_.t1, ssim_buf_.vI1, stream);
+    cv::cuda::split(ssim_buf_.t2, ssim_buf_.vI2, stream);
+    cv::Scalar mssim;
+    cv::Ptr<cv::cuda::Filter> gauss = cv::cuda::createGaussianFilter(ssim_buf_.vI1[0].type(), -1, cv::Size(11, 11), 1.5);
+    
+    for( int i = 0; i < ssim_buf_.gI1.channels(); ++i )
+    {
+        cv::cuda::multiply(ssim_buf_.vI2[i], ssim_buf_.vI2[i], ssim_buf_.I2_2, 1, -1, stream);        // I2^2
+        cv::cuda::multiply(ssim_buf_.vI1[i], ssim_buf_.vI1[i], ssim_buf_.I1_2, 1, -1, stream);        // I1^2
+        cv::cuda::multiply(ssim_buf_.vI1[i], ssim_buf_.vI2[i], ssim_buf_.I1_I2, 1, -1, stream);       // I1 * I2
+        gauss->apply(ssim_buf_.vI1[i], ssim_buf_.mu1, stream);
+        gauss->apply(ssim_buf_.vI2[i], ssim_buf_.mu2, stream);
+        cv::cuda::multiply(ssim_buf_.mu1, ssim_buf_.mu1, ssim_buf_.mu1_2, 1, -1, stream);
+        cv::cuda::multiply(ssim_buf_.mu2, ssim_buf_.mu2, ssim_buf_.mu2_2, 1, -1, stream);
+        cv::cuda::multiply(ssim_buf_.mu1, ssim_buf_.mu2, ssim_buf_.mu1_mu2, 1, -1, stream);
+        gauss->apply(ssim_buf_.I1_2, ssim_buf_.sigma1_2, stream);
+        cv::cuda::subtract(ssim_buf_.sigma1_2, ssim_buf_.mu1_2, ssim_buf_.sigma1_2, cv::cuda::GpuMat(), -1, stream);
+        //ssim_buf_.sigma1_2 -= ssim_buf_.mu1_2;  - This would result in an extra data transfer operation
+        gauss->apply(ssim_buf_.I2_2, ssim_buf_.sigma2_2, stream);
+        cv::cuda::subtract(ssim_buf_.sigma2_2, ssim_buf_.mu2_2, ssim_buf_.sigma2_2, cv::cuda::GpuMat(), -1, stream);
+        //ssim_buf_.sigma2_2 -= ssim_buf_.mu2_2;
+        gauss->apply(ssim_buf_.I1_I2, ssim_buf_.sigma12, stream);
+        cv::cuda::subtract(ssim_buf_.sigma12, ssim_buf_.mu1_mu2, ssim_buf_.sigma12, cv::cuda::GpuMat(), -1, stream);
+        //ssim_buf_.sigma12 -= ssim_buf_.mu1_mu2;
+        //here too it would be an extra data transfer due to call of operator*(Scalar, Mat)
+        cv::cuda::multiply(ssim_buf_.mu1_mu2, 2, ssim_buf_.t1, 1, -1, stream); //ssim_buf_.t1 = 2 * ssim_buf_.mu1_mu2 + C1;
+        cv::cuda::add(ssim_buf_.t1, C1, ssim_buf_.t1, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::multiply(ssim_buf_.sigma12, 2, ssim_buf_.t2, 1, -1, stream); //ssim_buf_.t2 = 2 * ssim_buf_.sigma12 + C2;
+        cv::cuda::add(ssim_buf_.t2, C2, ssim_buf_.t2, cv::cuda::GpuMat(), -12, stream);
+        cv::cuda::multiply(ssim_buf_.t1, ssim_buf_.t2, ssim_buf_.t3, 1, -1, stream);     // t3 = ((2*mu1_mu2 + C1).*(2*sigma12 + C2))
+        cv::cuda::add(ssim_buf_.mu1_2, ssim_buf_.mu2_2, ssim_buf_.t1, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::add(ssim_buf_.t1, C1, ssim_buf_.t1, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::add(ssim_buf_.sigma1_2, ssim_buf_.sigma2_2, ssim_buf_.t2, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::add(ssim_buf_.t2, C2, ssim_buf_.t2, cv::cuda::GpuMat(), -1, stream);
+        cv::cuda::multiply(ssim_buf_.t1, ssim_buf_.t2, ssim_buf_.t1, 1, -1, stream);     // t1 =((mu1_2 + mu2_2 + C1).*(sigma1_2 + sigma2_2 + C2))
+        cv::cuda::divide(ssim_buf_.t3, ssim_buf_.t1, ssim_buf_.ssim_map, 1, -1, stream);      // ssim_map =  t3./t1;
+        stream.waitForCompletion();
+        cv::Scalar s = cv::cuda::sum(ssim_buf_.ssim_map, ssim_buf_.buf);
+        mssim.val[i] = s.val[0] / (ssim_buf_.ssim_map.rows * ssim_buf_.ssim_map.cols);
+    }
+    return mssim;
+}
+
+float Bitmap::GetImageSimilarity(Bitmap& src_img){
+  if(this->width_ != src_img.Width() || this->height_ != src_img.Height()){
+     std::cerr << "must be same size in cal image similarity, try to resize" << std::endl;
+     std::cerr << "ref_img size: w:" << this->width_ << "h:" << this->height_ << " src img size: w:" << src_img.Width() << " h:" << src_img.Height() << std::endl;
+     src_img.Rescale(this->width_, this->height_);
+  }
+
+  // int patch_width = 21;
+  // int patch_height = 21;
+
+  // float mssim = 0.0f;
+  // int patch_num = 0;
+  // const int L = 255;
+  // const float c1 = 0.0001 * L * L;
+  // const float c2 = 0.0009 * L * L;
+
+  cv::Mat cv_ref_img, cv_src_img;
+  FI2MAT(Data(), cv_ref_img);
+  FI2MAT(src_img.Data(), cv_src_img);
+
+  cv::Scalar cv_mssim = getMSSIM_CUDA_optimized(cv_ref_img, cv_src_img);
+  float mssim = cv_mssim.val[0];
+  return mssim;
 }
 
 float JetColormap::Red(const float gray) { return Base(gray - 0.25f); }

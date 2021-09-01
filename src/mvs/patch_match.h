@@ -134,8 +134,19 @@ struct PatchMatchOptions {
   // of memory, if the consistency graph is dense.
   double cache_size = 32.0;
 
+  // Whether to tolerate missing images/maps in the problem setup
+  bool allow_missing_files = false;
+
   // Whether to write the consistency graph.
   bool write_consistency_graph = false;
+
+  // Two-Stage Para
+  double pos_min_dis = 2;
+  double pos_max_dis = 8;
+
+  double ort_min_dis = 30;
+  double ort_max_dis = 135;
+
 
   void Print() const;
   bool Check() const {
@@ -250,7 +261,8 @@ class PatchMatchController : public Thread {
   PatchMatchController(const PatchMatchOptions& options,
                        const std::string& workspace_path,
                        const std::string& workspace_format,
-                       const std::string& pmvs_option_name);
+                       const std::string& pmvs_option_name,
+                       const std::string& config_path = "");
 
  private:
   void Run();
@@ -264,6 +276,7 @@ class PatchMatchController : public Thread {
   const std::string workspace_path_;
   const std::string workspace_format_;
   const std::string pmvs_option_name_;
+  const std::string config_path_;
 
   std::unique_ptr<ThreadPool> thread_pool_;
   std::mutex workspace_mutex_;

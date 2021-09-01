@@ -33,6 +33,7 @@
 
 #include <numeric>
 #include <unordered_set>
+#include <random>
 
 #include "mvs/consistency_graph.h"
 #include "mvs/patch_match_cuda.h"
@@ -74,6 +75,11 @@ void PatchMatchOptions::Print() const {
   PrintOption(filter_min_num_consistent);
   PrintOption(filter_geom_consistency_max_cost);
   PrintOption(write_consistency_graph);
+  PrintOption(allow_missing_files);
+  PrintOption(pos_min_dis);
+  PrintOption(pos_max_dis);
+  PrintOption(ort_min_dis);
+  PrintOption(ort_max_dis);
 }
 
 void PatchMatch::Problem::Print() const {
@@ -183,11 +189,13 @@ ConsistencyGraph PatchMatch::GetConsistencyGraph() const {
 PatchMatchController::PatchMatchController(const PatchMatchOptions& options,
                                            const std::string& workspace_path,
                                            const std::string& workspace_format,
-                                           const std::string& pmvs_option_name)
+                                           const std::string& pmvs_option_name,
+                                           const std::string& config_path)
     : options_(options),
       workspace_path_(workspace_path),
       workspace_format_(workspace_format),
-      pmvs_option_name_(pmvs_option_name) {
+      pmvs_option_name_(pmvs_option_name),
+      config_path_(config_path) {
   std::vector<int> gpu_indices = CSVToVector<int>(options_.gpu_index);
 }
 
@@ -243,7 +251,7 @@ void PatchMatchController::ReadWorkspace() {
   workspace_options.workspace_format = workspace_format_;
   workspace_options.input_type = options_.geom_consistency ? "photometric" : "";
 
-  workspace_.reset(new Workspace(workspace_options));
+  workspace_.reset(new CachedWorkspace(workspace_options));
 
   if (workspace_format_lower_case == "pmvs") {
     std::cout << StringPrintf("Importing PMVS workspace (option %s)...",
@@ -262,9 +270,12 @@ void PatchMatchController::ReadProblems() {
 
   const auto& model = workspace_->GetModel();
 
-  std::vector<std::string> config = ReadTextFileLines(
-      JoinPaths(workspace_path_, workspace_->GetOptions().stereo_folder,
-                "patch-match.cfg"));
+  const std::string config_path =
+      config_path_.empty()
+          ? JoinPaths(workspace_path_, workspace_->GetOptions().stereo_folder,
+                      "patch-match.cfg")
+          : config_path_;
+  std::vector<std::string> config = ReadTextFileLines(config_path);
 
   std::vector<std::map<int, int>> shared_num_points;
   std::vector<std::map<int, float>> triangulation_angles;
@@ -314,12 +325,13 @@ void PatchMatchController::ReadProblems() {
       // Use all images as source images.
       problem.src_image_idxs.clear();
       problem.src_image_idxs.reserve(model.images.size() - 1);
-      for (const int image_idx : ref_image_idxs) {
-        if (image_idx != problem.ref_image_idx) {
+      for (size_t image_idx = 0; image_idx < model.images.size(); ++image_idx) {
+        if (static_cast<int>(image_idx) != problem.ref_image_idx) {
           problem.src_image_idxs.push_back(image_idx);
         }
       }
-    } else if (problem_config.src_image_names.size() == 2 &&
+    } 
+    else if (problem_config.src_image_names.size() == 2 &&
                problem_config.src_image_names[0] == "__auto__") {
       // Use maximum number of overlapping images as source images. Overlapping
       // will be sorted based on the number of shared points to the reference
@@ -346,9 +358,8 @@ void PatchMatchController::ReadProblems() {
       std::vector<std::pair<int, int>> src_images;
       src_images.reserve(overlapping_images.size());
       for (const auto& image : overlapping_images) {
-        if (ref_image_idxs.count(image.first) &&
-            overlapping_triangulation_angles.at(image.first) >=
-                min_triangulation_angle_rad) {
+        if (overlapping_triangulation_angles.at(image.first) >=
+            min_triangulation_angle_rad) {
           src_images.emplace_back(image.first, image.second);
         }
       }
@@ -368,7 +379,282 @@ void PatchMatchController::ReadProblems() {
       for (size_t i = 0; i < eff_max_num_src_images; ++i) {
         problem.src_image_idxs.push_back(src_images[i].first);
       }
-    } else {
+    }  
+    else if(problem_config.src_image_names.size() == 3 &&
+               problem_config.src_image_names[0] == "__two-stage__"){
+      // perform two-stage select.
+      // e.g. __two-stage__ 3 7
+      // stage-mode 1: preform 1 stage
+      // stage-mode 2: preform 2 stage
+      // stage-mode 3: perform 1, 2 stage
+
+      // set the stage-1 threshold
+      const float pos_min_dis = (float)options_.pos_min_dis;
+      const float pos_max_dis = (float)options_.pos_max_dis;
+
+      const float ort_min_dis = (float)options_.ort_min_dis * M_PI / 180;
+      const float ort_max_dis = (float)options_.ort_max_dis * M_PI / 180;
+
+      const int stage_mode = static_cast<int>(std::stoll(problem_config.src_image_names[1]));
+      std::cout << "View Selection stage-mode:" << stage_mode << std::endl;
+      assert(stage_mode == 1 || stage_mode == 2 || stage_mode == 3);
+
+      const size_t max_num_src_images = std::stoll(problem_config.src_image_names[2]);
+      
+      // get each view's n and pos
+      const auto view_ort = model.ComputeViewRays();
+      const auto view_pos = model.ComputeViewPos();
+
+      // candidate_views store the views selected by first stage, (img_id, score) for ref img
+      std::vector<std::pair<int, float>> candidate_views;
+      Model::Point ref_ort = view_ort.at(problem.ref_image_idx);
+      Model::Point ref_pos = view_pos.at(problem.ref_image_idx);
+
+      if(stage_mode == 1 || stage_mode == 3){
+        // stage 1 : filter out the view
+        for(size_t image_idx = 0; image_idx < model.images.size(); image_idx++){
+          if (static_cast<int>(image_idx) != problem.ref_image_idx) {
+            Model::Point src_ort = view_ort.at(image_idx);
+            Model::Point src_pos = view_pos.at(image_idx);
+            float pos_dis = (ref_pos - src_pos).norm();
+            float ort_dis = acos( ref_ort.dot(src_ort) / (ref_ort.norm() * src_ort.norm()) );
+            if(pos_dis > pos_min_dis && pos_dis < pos_max_dis && 
+                ort_dis > ort_min_dis && ort_dis < ort_max_dis){
+                  float score = (pos_dis - pos_min_dis) / (pos_max_dis - pos_dis) +
+                                  (ort_dis - ort_min_dis) / (ort_max_dis - ort_min_dis);
+                  candidate_views.emplace_back(std::make_pair(static_cast<int>(image_idx), score));
+            }
+          }
+        }
+      }
+      else{
+        // use all image as candidate_views and set score to 0.0f if don't use stage 1
+        for(size_t image_idx = 0; image_idx < model.images.size(); image_idx++){
+          candidate_views.emplace_back(std::make_pair(image_idx, 0.0f));
+        }
+      }
+
+      std::cout << "candidate views for ref image " << problem.ref_image_idx << " after stage 1:" << std::endl;
+      std::cout << "candidate views size: " << candidate_views.size() << "each of them: ";
+      for(auto cand: candidate_views){
+        std::cout << cand.first << ",";
+      }
+      std::cout << std::endl;
+
+      // src_images store the final source views, list of (img_id, score)
+      std::vector<std::pair<int, float>> src_images;
+      if(stage_mode == 2 || stage_mode == 3){
+        //perform stage 2 k-means
+
+        // 1. compute features for each view, view_feats store the features of each candidate, (img_id, (geom_dis, point_dis, img_dis))
+        std::unordered_map<int, Model::Point> view_feats;
+        Bitmap ref_img;
+        CHECK(ref_img.Read(workspace_->GetBitmapPath(problem.ref_image_idx), false));
+      
+        // compute all view center 
+        std::vector<Model::Point> proj_centers(model.images.size());
+        for (size_t image_idx = 0; image_idx < model.images.size(); ++image_idx) {
+          const auto& image = model.images[image_idx];
+          Model::Point C;
+          const float * R = image.GetR();
+          const float * T = image.GetR();
+          C.x = -(R[0] * T[0] + R[3] * T[1] + R[6] * T[2]);
+          C.y = -(R[1] * T[0] + R[4] * T[1] + R[7] * T[2]);
+          C.z = -(R[2] * T[0] + R[5] * T[1] + R[8] * T[2]);
+          proj_centers[image_idx] = C;
+        }
+
+        //(img_id, {point_id}), the points in each img_id
+        std::unordered_map<int, std::vector<int>> fs;
+        //(point_id, score), compute each score for point according to angle between all views contain it
+        std::unordered_map<int, float> wn;
+
+        // compute fs and wn
+        for (size_t p_id = 0; p_id < model.points.size(); p_id++) {
+          auto point = model.points[p_id];
+          // compute fs
+          for (size_t i = 0; i < point.track.size(); ++i) {
+            const int image_idx1 = point.track[i];
+            if(image_idx1 == problem.ref_image_idx){
+              // this point is in ref_img, then store it
+              for(size_t j = 0; j < point.track.size(); ++j){
+                if(i != j){
+                  fs[point.track[j]].emplace_back(p_id);
+                }
+              }
+              break;
+            }
+          }
+          // compute the wn
+          float score = 1.0f;
+          for (size_t i = 0; i < point.track.size(); ++i) {
+            for(size_t j = 0; j < i; ++j){
+              const float angle = model.CalculateTriangulationAnglePoint(
+                                     proj_centers.at(i), proj_centers.at(j),
+                                     point);
+              score *= std::min(( angle * angle / ort_max_dis * ort_max_dis), 1.0f);
+            }
+          }
+          wn[p_id] = score;
+        }
+        
+        const float* ref_K = model.images[problem.ref_image_idx].GetK();
+        const float* ref_P = model.images[problem.ref_image_idx].GetP();
+        
+        // compute features for each view
+        for(size_t image_idx = 0; image_idx < model.images.size(); image_idx++){
+          if (static_cast<int>(image_idx) != problem.ref_image_idx) {
+            // geom dis score
+            Model::Point src_ort = view_ort.at(image_idx);
+            Model::Point src_pos = view_pos.at(image_idx);
+            float pos_dis = (ref_pos - src_pos).norm();
+            float ort_dis = acos( ref_ort.dot(src_ort) / (ref_ort.norm() * src_ort.norm()) );
+            float geom_dis = 0.5 * (pos_dis - pos_min_dis) / (pos_max_dis - pos_dis) +
+                                  0.5 *(ort_dis - ort_min_dis) / (ort_max_dis - ort_min_dis);
+
+            // shared point score
+            float point_dis = 0.0f;
+            for(auto p_id: fs[image_idx]){
+              auto point = model.points[p_id];
+              
+              const float ref_p_z = ref_P[8] * point.x + ref_P[9] * point.y + ref_P[10] * point.z + ref_P[11];
+              const float ref_f = std::min(ref_K[0], ref_K[4]);
+              float sr = std::abs(ref_p_z) / ref_f;
+
+              const float* src_K = model.images[image_idx].GetK();
+              const float* src_P = model.images[image_idx].GetP();
+              const float src_p_z = src_P[8] * point.x + src_P[9] * point.y + src_P[10] * point.z + src_P[11];
+              const float src_f = std::min(src_K[0], src_K[4]);
+              float sv = std::abs(src_p_z) / src_f;
+
+              const float r = sr / sv;
+              float ws = r;
+              
+              if(r >= 2){
+                ws = 2 / r;
+              }
+              else if(r >= 1 && r < 2){
+                ws = 1.0f;
+              }
+
+              point_dis += wn[p_id] * ws;
+            }
+
+            // img similarity score
+            Bitmap src_img;
+            CHECK(src_img.Read(workspace_->GetBitmapPath(image_idx), false));
+            float img_dis = 1 - ref_img.GetImageSimilarity(src_img);
+            //float img_dis = 0.0f;
+            view_feats[static_cast<int>(image_idx)] = Model::Point(geom_dis, point_dis, img_dis);
+          }
+        }
+        
+        std::cout << "features for each candidate view for ref image " << problem.ref_image_idx << std::endl;
+        for(auto cand: candidate_views){
+          Model::Point feat = view_feats[cand.first];
+          std::cout << "candidate view: " << cand.first << " feat:(" << feat.x << ","  << feat.y << ","  << feat.z << ")" << std::endl;
+        }
+        std::cout << std::endl;
+
+        // k means
+        size_t k = std::min(candidate_views.size(), max_num_src_images);
+        std::cout << "src view size for ref image " << problem.ref_image_idx << " is " << k << std::endl;
+        float a1 = 1.0f;
+        float a2 = 1.0f;
+        float a3 = 1.0f;
+        
+        // center_ids: cand_id, use candidate_views[center_ids[i]].first to get img_id
+        std::vector<int> center_ids(candidate_views.size());
+        std::iota(center_ids.begin(), center_ids.end(), 0);
+        std::random_shuffle (center_ids.begin(), center_ids.end());
+        center_ids.reserve(k);
+
+        //store the view belong to each category's. (center_id, {cand_id})
+        std::unordered_map<int, std::vector<int>> token;
+        
+        int iter = 0;
+        while(iter < 5){
+          std::cout << "Iter" << iter << ":"<< std::endl;
+          std::cout << "source views: " << candidate_views.size();
+          for(auto cand_id: center_ids){
+            std::cout << candidate_views[cand_id].first << ",";
+          }
+          std::cout << std::endl;
+
+          iter++;
+
+          // change token with new center
+          for(size_t i = 0; i < candidate_views.size(); i++){
+            int minIndex = -1;
+            float minDis = INFINITY;
+            Model::Point f = view_feats[candidate_views[i].first];
+            // find the min cost center
+            for(size_t j = 0; j < k; j++){
+              Model::Point center_f = view_feats[candidate_views[center_ids[j]].first];
+              float dis = a1 * std::abs(center_f.x - f.x) + a2 * std::abs(center_f.y - f.y) + a3 * std::abs(center_f.z - f.z);
+              if(dis < minDis){
+                  minDis = dis;
+                  minIndex = j;
+              }
+            }
+            //std::cout << "view" << candidate_views[i].first << " belongs to " << minIndex <<std::endl;
+            token[minIndex].emplace_back(i);
+          }
+
+          // updata new center
+          for(size_t j = 0; j < k; j++){
+            // compute the avg center each category
+            Model::Point new_center_f(0.0f, 0.0f, 0.0f);
+            for(auto cand_id: token[j]){
+              new_center_f = new_center_f + view_feats[candidate_views[cand_id].first];
+            }
+            new_center_f = new_center_f / ((float)token[j].size());
+            
+            // use the closest one as new center
+            int minIndex = -1;
+            float minDis = INFINITY;
+            for(size_t token_id = 0; token_id < token[j].size(); token_id++){
+              Model::Point f = view_feats[candidate_views[token[j][token_id]].first];
+              float dis = a1 * (new_center_f.x - f.x) + a2 * (new_center_f.y - f.y) + a3 * (new_center_f.z - f.z);
+              if(dis < minDis){
+                  minDis = dis;
+                  minIndex = token_id;
+              }
+            }
+            center_ids[j] = token[j][minIndex];
+          }
+        }
+
+        std::cout << "Final source views after stage 2: " << candidate_views.size();
+        for(auto cand_id: center_ids){
+          std::cout << candidate_views[cand_id].first << ",";
+        }
+        std::cout << std::endl;
+
+        // set the src view
+        for (size_t i = 0; i < k; ++i) {
+          problem.src_image_idxs.push_back(candidate_views[center_ids[i]].first);
+        }
+      }
+      else{
+        // stage_mode = 1
+        const size_t eff_max_num_src_images =
+          std::min(candidate_views.size(), max_num_src_images);
+        std::partial_sort(candidate_views.begin(),
+                      candidate_views.begin() + eff_max_num_src_images,
+                      candidate_views.end(),
+                      [](const std::pair<int, float>& image1,
+                          const std::pair<int, float>& image2) {
+                        return image1.second > image2.second;
+                      });
+        problem.src_image_idxs.reserve(eff_max_num_src_images);
+        // add the k src imgs with high scores
+        for (size_t i = 0; i < eff_max_num_src_images; ++i) {
+          problem.src_image_idxs.push_back(candidate_views[i].first);
+        }
+      }
+    }
+    else {
       problem.src_image_idxs.reserve(problem_config.src_image_names.size());
       for (const auto& src_image_name : problem_config.src_image_names) {
         problem.src_image_idxs.push_back(model.GetImageIdx(src_image_name));
@@ -433,8 +719,8 @@ void PatchMatchController::ProcessProblem(const PatchMatchOptions& options,
     return;
   }
 
-  PrintHeading1(StringPrintf("Processing view %d / %d", problem_idx + 1,
-                             problems_.size()));
+  PrintHeading1(StringPrintf("Processing view %d / %d for %s", problem_idx + 1,
+                             problems_.size(), image_name.c_str()));
 
   auto patch_match_options = options;
 
@@ -482,13 +768,41 @@ void PatchMatchController::ProcessProblem(const PatchMatchOptions& options,
     std::unique_lock<std::mutex> lock(workspace_mutex_);
 
     std::cout << "Reading inputs..." << std::endl;
+    std::vector<int> src_image_idxs;
     for (const auto image_idx : used_image_idxs) {
+      std::string image_path = workspace_->GetBitmapPath(image_idx);
+      std::string depth_path = workspace_->GetDepthMapPath(image_idx);
+      std::string normal_path = workspace_->GetNormalMapPath(image_idx);
+
+      if (!ExistsFile(image_path) ||
+          (options.geom_consistency && !ExistsFile(depth_path)) ||
+          (options.geom_consistency && !ExistsFile(normal_path))) {
+        if (options.allow_missing_files) {
+          std::cout << StringPrintf(
+                           "WARN: Skipping source image %d: %s for missing "
+                           "image or depth/normal map",
+                           image_idx, model.GetImageName(image_idx).c_str())
+                    << std::endl;
+          continue;
+        } else {
+          std::cout
+              << StringPrintf(
+                     "ERROR: Missing image or map dependency for image %d: %s",
+                     image_idx, model.GetImageName(image_idx).c_str())
+              << std::endl;
+        }
+      }
+
+      if (image_idx != problem.ref_image_idx) {
+        src_image_idxs.push_back(image_idx);
+      }
       images.at(image_idx).SetBitmap(workspace_->GetBitmap(image_idx));
       if (options.geom_consistency) {
         depth_maps.at(image_idx) = workspace_->GetDepthMap(image_idx);
         normal_maps.at(image_idx) = workspace_->GetNormalMap(image_idx);
       }
     }
+    problem.src_image_idxs = src_image_idxs;
   }
 
   problem.Print();

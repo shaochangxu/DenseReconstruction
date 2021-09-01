@@ -53,9 +53,11 @@ void Model::Read(const std::string& path, const std::string& format) {
   }
 }
 
-void Model::ReadFromCOLMAP(const std::string& path) {
+void Model::ReadFromCOLMAP(const std::string& path,
+                           const std::string& sparse_path,
+                           const std::string& images_path) {
   Reconstruction reconstruction;
-  reconstruction.Read(JoinPaths(path, "sparse"));
+  reconstruction.Read(JoinPaths(path, sparse_path));
 
   images.reserve(reconstruction.NumRegImages());
   std::unordered_map<image_t, size_t> image_id_to_idx;
@@ -64,9 +66,7 @@ void Model::ReadFromCOLMAP(const std::string& path) {
     const auto& image = reconstruction.Image(image_id);
     const auto& camera = reconstruction.Camera(image.CameraId());
 
-    CHECK_EQ(camera.ModelId(), PinholeCameraModel::model_id);
-
-    const std::string image_path = JoinPaths(path, "images", image.Name());
+    const std::string image_path = JoinPaths(path, images_path, image.Name());
     const Eigen::Matrix<float, 3, 3, Eigen::RowMajor> K =
         camera.CalibrationMatrix().cast<float>();
     const Eigen::Matrix<float, 3, 3, Eigen::RowMajor> R =
@@ -230,6 +230,27 @@ std::vector<std::map<int, int>> Model::ComputeSharedPoints() const {
     }
   }
   return shared_points;
+}
+
+std::unordered_map<int, Model::Point> Model::ComputeViewRays() const {
+  std::unordered_map<int, Model::Point> view_rays(images.size());
+  for (size_t image_idx = 0; image_idx < images.size(); ++image_idx) {
+    const auto& image = images[image_idx];
+    const float * n = image.GetViewingDirection();
+    view_rays[static_cast<int>(image_idx)] = Model::Point(n[0], n[1], n[2]);
+  }
+  return view_rays;
+}
+
+std::unordered_map<int, Model::Point> Model::ComputeViewPos() const {
+  std::unordered_map<int, Model::Point> proj_centers(images.size());
+  for (size_t image_idx = 0; image_idx < images.size(); ++image_idx) {
+    const auto& image = images[image_idx];
+    Eigen::Vector3f C;
+    ComputeProjectionCenter(image.GetR(), image.GetT(), C.data());
+    proj_centers[static_cast<int>(image_idx)] = Model::Point(C[0], C[1], C[2]);
+  }
+  return proj_centers;
 }
 
 std::vector<std::map<int, float>> Model::ComputeTriangulationAngles(
@@ -442,6 +463,54 @@ bool Model::ReadFromRawPMVS(const std::string& path) {
   }
 
   return true;
+}
+
+float Model::CalculateTriangulationAnglePoint(Model::Point& c1, Model::Point& c2, Model::Point& p) const {
+   return CalculateTriangulationAngle(
+            Eigen::Vector3d(c1.x, c1.y, c1.z),
+            Eigen::Vector3d(c2.x, c2.y, c2.z),
+            Eigen::Vector3d(p.x, p.y, p.z)
+          );
+}
+
+float Model::Point::dot(Model::Point& p){
+  return this->x * p.x + this->y * p.y + this->z * p.z;
+}
+
+float Model::Point::norm(){
+  return sqrtf(this->x * this->x + this->y * this->y + this->z * this->z);
+}
+
+Model::Point Model::Point::operator-(const Model::Point& p){
+  Model::Point re;
+  re.x = this->x - p.x;
+  re.y = this->y - p.y;
+  re.z = this->z - p.z;
+  return re;
+}
+
+Model::Point Model::Point::operator+(const Model::Point& p){
+  Model::Point re;
+  re.x = this->x + p.x;
+  re.y = this->y + p.y;
+  re.z = this->z + p.z;
+  return re;
+}
+
+Model::Point Model::Point::operator*(const float a){
+  Model::Point re;
+  re.x = this->x * a;
+  re.y = this->y * a;
+  re.z = this->z * a;
+  return re;
+}
+
+Model::Point Model::Point::operator/(const float a){
+  Model::Point re;
+  re.x = this->x / a;
+  re.y = this->y / a;
+  re.z = this->z / a;
+  return re;
 }
 
 }  // namespace mvs

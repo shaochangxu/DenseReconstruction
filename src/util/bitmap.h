@@ -32,6 +32,7 @@
 #ifndef COLMAP_SRC_UTIL_BITMAP_H_
 #define COLMAP_SRC_UTIL_BITMAP_H_
 
+#define OPENCV_TRAITS_ENABLE_DEPRECATED
 #include <algorithm>
 #include <cmath>
 #include <ios>
@@ -45,8 +46,11 @@
 #include <Windows.h>
 #endif
 #include <FreeImage.h>
-
 #include "util/string.h"
+#include "../lib/FLANN/flann.h"
+
+using namespace std;
+#include <opencv2/opencv.hpp>
 
 namespace colmap {
 
@@ -70,6 +74,19 @@ struct BitmapColor {
   T r;
   T g;
   T b;
+};
+
+struct BufferMSSIM  // Optimized CUDA versions
+{   // Data allocations are very expensive on CUDA. Use a buffer to solve: allocate once reuse later.
+    cv::cuda::GpuMat gI1, gI2, gs, t1,t2;
+    cv::cuda::GpuMat I1_2, I2_2, I1_I2;
+    std::vector<cv::cuda::GpuMat> vI1, vI2;
+    cv::cuda::GpuMat mu1, mu2;
+    cv::cuda::GpuMat mu1_2, mu2_2, mu1_mu2;
+    cv::cuda::GpuMat sigma1_2, sigma2_2, sigma12;
+    cv::cuda::GpuMat t3;
+    cv::cuda::GpuMat ssim_map;
+    cv::cuda::GpuMat buf;
 };
 
 // Wrapper class around FreeImage bitmaps.
@@ -98,7 +115,7 @@ class Bitmap {
   void Deallocate();
 
   // Get pointer to underlying FreeImage object.
-  inline const FIBITMAP* Data() const;
+  //inline const FIBITMAP* Data() const;
   inline FIBITMAP* Data();
 
   // Dimensions of bitmap.
@@ -145,6 +162,7 @@ class Bitmap {
 
   // Extract EXIF information from bitmap. Returns false if no EXIF information
   // is embedded in the bitmap.
+  bool ExifCameraModel(std::string* camera_model) const;
   bool ExifFocalLength(double* focal_length) const;
   bool ExifLatitude(double* latitude) const;
   bool ExifLongitude(double* longitude) const;
@@ -178,6 +196,9 @@ class Bitmap {
   bool ReadExifTag(const FREE_IMAGE_MDMODEL model, const std::string& tag_name,
                    std::string* result) const;
 
+  // cal ssim 
+  float GetImageSimilarity(Bitmap& src_img);
+  
  private:
   typedef std::unique_ptr<FIBITMAP, decltype(&FreeImage_Unload)> FIBitmapPtr;
 
@@ -186,11 +207,13 @@ class Bitmap {
   static bool IsPtrGrey(FIBITMAP* data);
   static bool IsPtrRGB(FIBITMAP* data);
   static bool IsPtrSupported(FIBITMAP* data);
-
+  cv::Scalar getMSSIM_CUDA_optimized(const cv::Mat& i1, const cv::Mat& i2);
+  void FI2MAT(FIBITMAP* src, cv::Mat& dst);
   FIBitmapPtr data_;
   int width_;
   int height_;
   int channels_;
+  BufferMSSIM ssim_buf_;
 };
 
 // Jet colormap inspired by Matlab. Grayvalues are expected in the range [0, 1]
@@ -261,7 +284,7 @@ std::ostream& operator<<(std::ostream& output, const BitmapColor<T>& color) {
 }
 
 FIBITMAP* Bitmap::Data() { return data_.get(); }
-const FIBITMAP* Bitmap::Data() const { return data_.get(); }
+//const FIBITMAP* Bitmap::Data() const { return data_.get(); }
 
 int Bitmap::Width() const { return width_; }
 int Bitmap::Height() const { return height_; }

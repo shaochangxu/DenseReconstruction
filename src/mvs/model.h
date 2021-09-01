@@ -54,11 +54,21 @@ struct Model {
     float y = 0;
     float z = 0;
     std::vector<int> track;
+    Point(){}
+    Point(float a, float b, float c) :x(a), y(b), z(c){}
+    float norm();
+    float dot(Point& p);
+    Point operator-(const Point& p);
+    Point operator+(const Point& p);
+    Point operator*(const float scale);
+    Point operator/(const float scale);
   };
 
   // Read the model from different data formats.
   void Read(const std::string& path, const std::string& format);
-  void ReadFromCOLMAP(const std::string& path);
+  void ReadFromCOLMAP(const std::string& path,
+                      const std::string& sparse_path = "sparse",
+                      const std::string& images_path = "images");
   void ReadFromPMVS(const std::string& path);
 
   // Get the image index for the given image name.
@@ -84,6 +94,10 @@ struct Model {
   std::vector<std::map<int, float>> ComputeTriangulationAngles(
       const float percentile = 50) const;
 
+  // Compute the view ray and pos of each view
+  std::unordered_map<int, Point> ComputeViewRays() const;
+  std::unordered_map<int, Point> ComputeViewPos() const;
+  float CalculateTriangulationAnglePoint(Point& c1, Point& c2, Point& p) const;
   // Note that in case the data is read from a COLMAP reconstruction, the index
   // of an image or point does not correspond to its original identifier in the
   // reconstruction, but it corresponds to the position in the
