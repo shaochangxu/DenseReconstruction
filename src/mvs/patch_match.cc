@@ -389,11 +389,11 @@ void PatchMatchController::ReadProblems() {
       // stage-mode 3: perform 1, 2 stage
 
       // set the stage-1 threshold
-      const float pos_min_dis = options_.pos_min_dis;
-      const float pos_max_dis = options_.pos_max_dis;
+      const float pos_min_dis = (float)options_.pos_min_dis;
+      const float pos_max_dis = (float)options_.pos_max_dis;
 
-      const float ort_min_dis = options_.ort_min_dis * M_PI / 180;
-      const float ort_max_dis = options_.ort_max_dis * M_PI / 180;
+      const float ort_min_dis = (float)options_.ort_min_dis * M_PI / 180;
+      const float ort_max_dis = (float)options_.ort_max_dis * M_PI / 180;
 
       const int stage_mode = static_cast<int>(std::stoll(problem_config.src_image_names[1]));
       std::cout << "View Selection stage-mode:" << stage_mode << std::endl;
@@ -543,8 +543,8 @@ void PatchMatchController::ReadProblems() {
             // img similarity score
             Bitmap src_img;
             CHECK(src_img.Read(workspace_->GetBitmapPath(image_idx), false));
-            //float img_dis = 1 - ref_img.GetImageSimilarity(src_img);
-            float img_dis = 0.0f;
+            float img_dis = 1 - ref_img.GetImageSimilarity(src_img);
+            //float img_dis = 0.0f;
             view_feats[static_cast<int>(image_idx)] = Model::Point(geom_dis, point_dis, img_dis);
           }
         }

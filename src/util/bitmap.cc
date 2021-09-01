@@ -775,6 +775,7 @@ cv::Scalar Bitmap::getMSSIM_CUDA_optimized( const cv::Mat& i1, const cv::Mat& i2
 float Bitmap::GetImageSimilarity(Bitmap& src_img){
   if(this->width_ != src_img.Width() || this->height_ != src_img.Height()){
      std::cerr << "must be same size in cal image similarity, try to resize" << std::endl;
+     std::cerr << "ref_img size: w:" << this->width_ << "h:" << this->height_ << " src img size: w:" << src_img.Width() << " h:" << src_img.Height() << std::endl;
      src_img.Rescale(this->width_, this->height_);
   }
 
