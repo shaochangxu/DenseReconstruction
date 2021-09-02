@@ -1923,6 +1923,8 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
                                           GpuMat<float> M_map,
                                           GpuMat<int> last_important_view_map,
                                           GpuMat<float> view_weight_map,
+                                          GpuMat<int> S_step,
+                                          GpuMat<int> V_step,
                                           const GpuMat<float> ref_sum_image,
                                           const GpuMat<float> ref_squared_sum_image,
                                           GpuMat<curandState> rand_state_map,
@@ -1965,14 +1967,14 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
           float minCost[8] = {pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost};
           int pt_index[16] = {row,col, row,col, row,col, row,col, row,col, row,col, row,col, row,col};
           
-          int s_up = S_step_.Get(row, col, 0);
-          int s_down = S_step_.Get(row, col, 1);
-          int s_left = S_step_.Get(row, col, 2);
-          int s_right = S_step_.Get(row, col, 3);
-          int v_up = S_step_.Get(row, col, 0);
-          int v_down = S_step_.Get(row, col, 1);
-          int v_left = S_step_.Get(row, col, 2);
-          int v_right = S_step_.Get(row, col, 3);
+          int s_up = S_step.Get(row, col, 0);
+          int s_down = S_step.Get(row, col, 1);
+          int s_left = S_step.Get(row, col, 2);
+          int s_right = S_step.Get(row, col, 3);
+          int v_up = V_step.Get(row, col, 0);
+          int v_down = V_step.Get(row, col, 1);
+          int v_left = V_step.Get(row, col, 2);
+          int v_right = V_step.Get(row, col, 3);
           // i. select the 8 hypo with min cost
           CheckBoardSampler(cost_map.GetPtr(), cost_map.GetPitch(), row, col, cost_map.GetHeight(), cost_map.GetWidth(), cost_map.GetDepth(), 
                             v_up, v_down, v_left, v_right,
@@ -1988,56 +1990,56 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
             int pt_c = pt_index[2 * i + 1];
             // up S
             if(pt_r < row && pt_c == col) {
-              S_step_.Set(row, col, 0, s_up + 1);
+              S_step.Set(row, col, 0, s_up + 1);
               hit[0] = true;
             }
             // down S
             else if(pt_r > row && pt_c == col) {
-              S_step_.Set(row, col, 1, s_down + 1);
+              S_step.Set(row, col, 1, s_down + 1);
               hit[1] = true;
             }
             // left S
             else if(pt_r == row && pt_c < col) {
-              S_step_.Set(row, col, 2, s_left + 1);
+              S_step.Set(row, col, 2, s_left + 1);
               hit[2] = true;
             }
             // right S
             else if(pt_r == row && pt_c > col) {
-              S_step_.Set(row, col, 3, s_right + 1);
+              S_step.Set(row, col, 3, s_right + 1);
               hit[3] = true;
             }
             // up v
             else if(pt_r < row && (pt_c - col == (row - 1) - pt_r || col - pt_c == (row - 1) - pt_r)) {
-              V_step_.Set(row, col, 0, v_up + 1);
+              V_step.Set(row, col, 0, v_up + 1);
               hit[4] = true;
             }
             // down V
             else if(pt_r > row && (pt_c - col == pt_r - (row + 1) || col - pt_c == pt_r - (row + 1))) {
-              V_step_.Set(row, col, 1, v_down + 1);
+              V_step.Set(row, col, 1, v_down + 1);
               hit[5] = true;
             }
             // left V
             else if(pt_c < col && (pt_r - row == (col - 1) - pt_c || row - pt_r == (col - 1) - pt_c)) {
-              V_step_.Set(row, col, 2, v_left + 1);
+              V_step.Set(row, col, 2, v_left + 1);
               hit[6] = true;
             }
             // right V
             else if(pt_c > col && (pt_r - row == pt_c - (col + 1) || row - pt_r == pt_c - (col + 1))) {
-              V_step_.Set(row, col, 3, v_right + 1);
+              V_step.Set(row, col, 3, v_right + 1);
               hit[7] = true;
             }
           }
 
           for(int i = 0; i < 8; i++){
             if(!hit[i]){
-              if(i == 0) S_step_.Set(row, col, 0, max_cu(s_up - 1), 1);
-              else if(i == 1) S_step_.Set(row, col, 1, max_cu(s_down - 1), 1);
-              else if(i == 2) S_step_.Set(row, col, 2, max_cu(s_left - 1), 1);
-              else if(i == 3) S_step_.Set(row, col, 3, max_cu(s_right - 1), 1);
-              else if(i == 4) V_step_.Set(row, col, 0, max_cu(v_up - 1), 1);
-              else if(i == 5) V_step_.Set(row, col, 1, max_cu(v_down - 1), 1);
-              else if(i == 6) V_step_.Set(row, col, 2, max_cu(v_left - 1), 1);
-              else if(i == 7) V_step_.Set(row, col, 3, max_cu(v_right - 1), 1);
+              if(i == 0) S_step.Set(row, col, 0, max_cu(s_up - 1), 1);
+              else if(i == 1) S_step.Set(row, col, 1, max_cu(s_down - 1), 1);
+              else if(i == 2) S_step.Set(row, col, 2, max_cu(s_left - 1), 1);
+              else if(i == 3) S_step.Set(row, col, 3, max_cu(s_right - 1), 1);
+              else if(i == 4) V_step.Set(row, col, 0, max_cu(v_up - 1), 1);
+              else if(i == 5) V_step.Set(row, col, 1, max_cu(v_down - 1), 1);
+              else if(i == 6) V_step.Set(row, col, 2, max_cu(v_left - 1), 1);
+              else if(i == 7) V_step.Set(row, col, 3, max_cu(v_right - 1), 1);
             }
           }
 
@@ -2410,43 +2412,42 @@ void PatchMatchCuda::ACMMRunWithWindowSizeAndStep() {
     if(options_.geom_consistency){
       const bool kGeomConsistencyTerm = true;
       for(int iter = 0; iter < options_.num_iterations; ++iter) {
-      CudaTimer iter_timer;
-      CUDA_SYNC_AND_CHECK();
-      ACMMCheckerBoard_cu<kWindowSize, kWindowStep, kGeomConsistencyTerm><<<elem_wise_grid_size_, elem_wise_block_size_>>>
-      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-          options_.sigma_color, options_.depth_min, options_.depth_max, true, options_.geom_consistency_regularizer);
-      CUDA_SYNC_AND_CHECK();
-      ACMMCheckerBoard_cu<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
-      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-          options_.sigma_color, options_.depth_min, options_.depth_max, false, options_.geom_consistency_regularizer);
-      CUDA_SYNC_AND_CHECK();
-      RefineMent<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
-      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-          options_.sigma_color, options_.depth_min, options_.depth_max, options_.geom_consistency_regularizer);
-      CUDA_SYNC_AND_CHECK();
-      iter_timer.Print("Iteration " + std::to_string(iter + 1));
-    }
-
+        CudaTimer iter_timer;
+        CUDA_SYNC_AND_CHECK();
+        ACMMCheckerBoard_cu<kWindowSize, kWindowStep, kGeomConsistencyTerm><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+            options_.sigma_color, options_.depth_min, options_.depth_max, true, options_.geom_consistency_regularizer);
+        CUDA_SYNC_AND_CHECK();
+        ACMMCheckerBoard_cu<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+            options_.sigma_color, options_.depth_min, options_.depth_max, false, options_.geom_consistency_regularizer);
+        CUDA_SYNC_AND_CHECK();
+        RefineMent<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+            options_.sigma_color, options_.depth_min, options_.depth_max, options_.geom_consistency_regularizer);
+        CUDA_SYNC_AND_CHECK();
+        iter_timer.Print("Iteration " + std::to_string(iter + 1));
+      }
     }
     else{
-    const bool kGeomConsistencyTerm = false;
-    for(int iter = 0; iter < options_.num_iterations; ++iter) {
-      CudaTimer iter_timer;
-      CUDA_SYNC_AND_CHECK();
-      ACMMCheckerBoard_cu<kWindowSize, kWindowStep, kGeomConsistencyTerm><<<elem_wise_grid_size_, elem_wise_block_size_>>>
-      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-          options_.sigma_color, options_.depth_min, options_.depth_max, true, options_.geom_consistency_regularizer);
-      CUDA_SYNC_AND_CHECK();
-      ACMMCheckerBoard_cu<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
-      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-          options_.sigma_color, options_.depth_min, options_.depth_max, false, options_.geom_consistency_regularizer);
-      CUDA_SYNC_AND_CHECK();
-      RefineMent<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
-      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-          options_.sigma_color, options_.depth_min, options_.depth_max, options_.geom_consistency_regularizer);
-      CUDA_SYNC_AND_CHECK();
-      iter_timer.Print("Iteration " + std::to_string(iter + 1));
-    }
+      const bool kGeomConsistencyTerm = false;
+      for(int iter = 0; iter < options_.num_iterations; ++iter) {
+        CudaTimer iter_timer;
+        CUDA_SYNC_AND_CHECK();
+        ACMMCheckerBoard_cu<kWindowSize, kWindowStep, kGeomConsistencyTerm><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+            options_.sigma_color, options_.depth_min, options_.depth_max, true, options_.geom_consistency_regularizer);
+        CUDA_SYNC_AND_CHECK();
+        ACMMCheckerBoard_cu<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+            options_.sigma_color, options_.depth_min, options_.depth_max, false, options_.geom_consistency_regularizer);
+        CUDA_SYNC_AND_CHECK();
+        RefineMent<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+            options_.sigma_color, options_.depth_min, options_.depth_max, options_.geom_consistency_regularizer);
+        CUDA_SYNC_AND_CHECK();
+        iter_timer.Print("Iteration " + std::to_string(iter + 1));
+      }
     }
     total_timer.Print("Total");
 }
