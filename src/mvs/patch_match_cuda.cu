@@ -1930,7 +1930,7 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
                                           float sigma_spatial,
                                           float sigma_color,
                                           float depth_min,
-                                          float depth_max
+                                          float depth_max,
                                           bool isBlack,
                                           float geom_lamda = 0.0f) {
 
