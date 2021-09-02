@@ -1908,7 +1908,7 @@ __device__ inline void CheckBoardSampler(float* cost_map,
   }
 }
 
-__device__ inline int max_cu(int a, int b){
+__device__ int max_cu(int a, int b){
   if(a > b){
     return a;
   }
@@ -1923,8 +1923,8 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
                                           GpuMat<float> M_map,
                                           GpuMat<int> last_important_view_map,
                                           GpuMat<float> view_weight_map,
-                                          GpuMat<int> S_step,
                                           GpuMat<int> V_step,
+                                          GpuMat<int> S_step,
                                           const GpuMat<float> ref_sum_image,
                                           const GpuMat<float> ref_squared_sum_image,
                                           GpuMat<curandState> rand_state_map,
@@ -1946,7 +1946,7 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
 
     PhotoConsistencyCostComputer<kWindowSize, kWindowStep> pcc_computer(
       sigma_spatial, sigma_color);
-    pcc_computer.local_ref_image = local_ref_image;
+    pcc_computer.local_ref_image.data = &local_ref_image[0];
     pcc_computer.row = row;
     pcc_computer.col = col;
 
@@ -1980,8 +1980,8 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
                             v_up, v_down, v_left, v_right,
                             s_up, s_down, s_left, s_right,
                             minCost, pt_index);
-
-          // s: up down left right; v: up down left right; 
+	  
+          // v: up down left right; s: up down left right; 
           bool hit[8] = {false, false, false, false, false, false, false, false};
 
           //update the search area
@@ -2029,20 +2029,20 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
               hit[7] = true;
             }
           }
-
-          for(int i = 0; i < 8; i++){
+	  
+          for(size_t i = 0; i < 8; i++){
             if(!hit[i]){
-              if(i == 0) S_step.Set(row, col, 0, max_cu(s_up - 1), 1);
-              else if(i == 1) S_step.Set(row, col, 1, max_cu(s_down - 1), 1);
-              else if(i == 2) S_step.Set(row, col, 2, max_cu(s_left - 1), 1);
-              else if(i == 3) S_step.Set(row, col, 3, max_cu(s_right - 1), 1);
-              else if(i == 4) V_step.Set(row, col, 0, max_cu(v_up - 1), 1);
-              else if(i == 5) V_step.Set(row, col, 1, max_cu(v_down - 1), 1);
-              else if(i == 6) V_step.Set(row, col, 2, max_cu(v_left - 1), 1);
-              else if(i == 7) V_step.Set(row, col, 3, max_cu(v_right - 1), 1);
+              if(i == 0) S_step.Set(row, col, 0,  12);
+              else if(i == 1) S_step.Set(row, col, 1, 12);
+              else if(i == 2) S_step.Set(row, col, 2, 12);
+              else if(i == 3) S_step.Set(row, col, 3, 12);
+              else if(i == 4) V_step.Set(row, col, 0, 3);
+              else if(i == 5) V_step.Set(row, col, 1, 3);
+              else if(i == 6) V_step.Set(row, col, 2, 3);
+              else if(i == 7) V_step.Set(row, col, 3, 3);
             }
           }
-
+          
           // 9 hypo: 8 selected and the current
           float normals_0[3];
           float normals_1[3];
@@ -2089,8 +2089,8 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
           /*
           * iii. Computer viewWeight
           */
-          float init_good_threshold = 0.8f;
-          float bad_threshold = 1.2f;
+          float init_good_threshold = 0.6f;
+          float bad_threshold = 1.6f;
           int viewWeight_n1 = 2;
           int viewWeight_n2 = 3;
           float viewWeight_alpha = 90.0f;
@@ -2205,7 +2205,7 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
 
 
 // same as general process, but with random hypo
-template<int kWindowSize, int kWindowStep>
+template<int kWindowSize, int kWindowStep, bool kGeomConsistencyTerm=false>
 __global__ void RefineMent(GpuMat<float> cost_map,
                             GpuMat<float> depth_map,
                             GpuMat<float> normal_map,
@@ -2232,7 +2232,7 @@ __global__ void RefineMent(GpuMat<float> cost_map,
 
   PhotoConsistencyCostComputer<kWindowSize, kWindowStep> pcc_computer(
     sigma_spatial, sigma_color);
-  pcc_computer.local_ref_image = local_ref_image;
+  pcc_computer.local_ref_image.data = &local_ref_image[0];
   pcc_computer.row = row;
   pcc_computer.col = col;
 
@@ -2290,8 +2290,8 @@ __global__ void RefineMent(GpuMat<float> cost_map,
       /*
       * iii. Computer viewWeight
       */
-      float init_good_threshold = 0.8f;
-      float bad_threshold = 1.2f;
+      float init_good_threshold = 0.6f;
+      float bad_threshold = 1.6f;
       int viewWeight_n1 = 2;
       int viewWeight_n2 = 3;
       float viewWeight_alpha = 90.0f;
@@ -2415,12 +2415,10 @@ void PatchMatchCuda::ACMMRunWithWindowSizeAndStep() {
         CudaTimer iter_timer;
         CUDA_SYNC_AND_CHECK();
         ACMMCheckerBoard_cu<kWindowSize, kWindowStep, kGeomConsistencyTerm><<<elem_wise_grid_size_, elem_wise_block_size_>>>
-        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-            options_.sigma_color, options_.depth_min, options_.depth_max, true, options_.geom_consistency_regularizer);
+        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *V_step_, *S_step_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial, options_.sigma_color, options_.depth_min, options_.depth_max, true, options_.geom_consistency_regularizer);
         CUDA_SYNC_AND_CHECK();
         ACMMCheckerBoard_cu<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
-        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-            options_.sigma_color, options_.depth_min, options_.depth_max, false, options_.geom_consistency_regularizer);
+        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *V_step_, *S_step_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial, options_.sigma_color, options_.depth_min, options_.depth_max, false, options_.geom_consistency_regularizer);
         CUDA_SYNC_AND_CHECK();
         RefineMent<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
         ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
@@ -2435,12 +2433,10 @@ void PatchMatchCuda::ACMMRunWithWindowSizeAndStep() {
         CudaTimer iter_timer;
         CUDA_SYNC_AND_CHECK();
         ACMMCheckerBoard_cu<kWindowSize, kWindowStep, kGeomConsistencyTerm><<<elem_wise_grid_size_, elem_wise_block_size_>>>
-        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-            options_.sigma_color, options_.depth_min, options_.depth_max, true, options_.geom_consistency_regularizer);
+        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_,*sel_prob_map_, *V_step_, *S_step_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial, options_.sigma_color, options_.depth_min, options_.depth_max, true, options_.geom_consistency_regularizer);
         CUDA_SYNC_AND_CHECK();
         ACMMCheckerBoard_cu<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
-        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-            options_.sigma_color, options_.depth_min, options_.depth_max, false, options_.geom_consistency_regularizer);
+        ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *V_step_, *S_step_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial, options_.sigma_color, options_.depth_min, options_.depth_max, false, options_.geom_consistency_regularizer);
         CUDA_SYNC_AND_CHECK();
         RefineMent<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
         ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
@@ -2738,7 +2734,7 @@ void PatchMatchCuda::InitWorkspaceMemory() {
 
   // up down left right
   V_step_.reset(new GpuMat<int>(ref_width_, ref_height_, 4)); 
-  V_step_->FillWithScalar(3);
+  V_step_->FillWithScalar(5);
   S_step_.reset(new GpuMat<int>(ref_width_, ref_height_, 4));
   S_step_->FillWithScalar(11);
   
