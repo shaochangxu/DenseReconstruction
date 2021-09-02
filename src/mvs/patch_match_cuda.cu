@@ -552,7 +552,7 @@ struct PhotoConsistencyCostComputer {
     int ref_image_idx = cur_idx - kWindowRadius * shared_width- kWindowRadius;
     int ref_image_base_idx = ref_image_idx;
 
-    const float ref_center_color = local_ref_image[cur_idx];
+    const float ref_center_color = local_ref_image.data[cur_idx];
     
     const float ref_color_sum = local_ref_sum;
     const float ref_color_squared_sum = local_ref_squared_sum;
@@ -567,7 +567,7 @@ struct PhotoConsistencyCostComputer {
         const float norm_col_src = inv_z * col_src + 0.5f;
         const float norm_row_src = inv_z * row_src + 0.5f;
         
-        const float ref_color = local_ref_image[ref_image_idx];//tex2D(ref_image_texture, col + c, row + r);//
+        const float ref_color = local_ref_image.data[ref_image_idx];//tex2D(ref_image_texture, col + c, row + r);//
         const float src_color = tex2DLayered(src_images_texture, norm_col_src,
                                              norm_row_src, src_image_idx);
 
@@ -1603,7 +1603,7 @@ __global__ void ACMMComputeInitialCost(GpuMat<float> cost_map,
 
     PhotoConsistencyCostComputer<kWindowSize, kWindowStep> pcc_computer(
       sigma_spatial, sigma_color);
-    pcc_computer.local_ref_image = local_ref_image;
+    pcc_computer.local_ref_image.data = &local_ref_image[0];
     pcc_computer.row = row;
     pcc_computer.col = col;
 
@@ -2407,11 +2407,9 @@ void PatchMatchCuda::ACMMRunWithWindowSizeAndStep() {
 
     init_timer.Print("Initialization");
 
-    bool kGeomConsistencyTerm = false;
     if(options_.geom_consistency){
-      kGeomConsistencyTerm = true;
-    }
-    for(int iter = 0; iter < options_.num_iterations; ++iter) {
+      const bool kGeomConsistencyTerm = true;
+      for(int iter = 0; iter < options_.num_iterations; ++iter) {
       CudaTimer iter_timer;
       CUDA_SYNC_AND_CHECK();
       ACMMCheckerBoard_cu<kWindowSize, kWindowStep, kGeomConsistencyTerm><<<elem_wise_grid_size_, elem_wise_block_size_>>>
@@ -2429,6 +2427,27 @@ void PatchMatchCuda::ACMMRunWithWindowSizeAndStep() {
       iter_timer.Print("Iteration " + std::to_string(iter + 1));
     }
 
+    }
+    else{
+    const bool kGeomConsistencyTerm = false;
+    for(int iter = 0; iter < options_.num_iterations; ++iter) {
+      CudaTimer iter_timer;
+      CUDA_SYNC_AND_CHECK();
+      ACMMCheckerBoard_cu<kWindowSize, kWindowStep, kGeomConsistencyTerm><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+          options_.sigma_color, options_.depth_min, options_.depth_max, true, options_.geom_consistency_regularizer);
+      CUDA_SYNC_AND_CHECK();
+      ACMMCheckerBoard_cu<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+          options_.sigma_color, options_.depth_min, options_.depth_max, false, options_.geom_consistency_regularizer);
+      CUDA_SYNC_AND_CHECK();
+      RefineMent<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+          options_.sigma_color, options_.depth_min, options_.depth_max, options_.geom_consistency_regularizer);
+      CUDA_SYNC_AND_CHECK();
+      iter_timer.Print("Iteration " + std::to_string(iter + 1));
+    }
+    }
     total_timer.Print("Total");
 }
 ////////////////////////////////////////////////////////////////////////////////////////   ACMM END ///////////////////////////////////////////////////////////////////////////////////////////
