@@ -528,8 +528,6 @@ struct PhotoConsistencyCostComputer {
   }
 
   __device__ inline float ACMMCompute_shared(const int thread_idx_x, const int thread_idx_y) const {
-  	
-
     float tform[9];
     ComposeHomography(src_image_idx, row, col, depth, normal, tform);
 
@@ -548,13 +546,6 @@ struct PhotoConsistencyCostComputer {
     float base_row_src = row_src;
     float base_z = z;
 
-    // shared memory
- //    const int shared_width = 3 * THREADS_PER_BLOCK;
- //    const int shared_idx = THREADS_PER_BLOCK + thread_idx_x;
-	// const int shared_idy = THREADS_PER_BLOCK + thread_idx_y;
-	// const int cur_idx = shared_idy * shared_width + shared_idx;
- //    int ref_image_idx = cur_idx - kWindowRadius * shared_width- kWindowRadius;
- //    int ref_image_base_idx = ref_image_idx;
     const int shared_width = (THREADS_PER_BLOCK + 2 * kWindowRadius);
     const int cur_idx = (thread_idx_y + kWindowRadius) * shared_width+ kWindowRadius + thread_idx_x;
 
@@ -570,10 +561,9 @@ struct PhotoConsistencyCostComputer {
     float src_ref_color_sum = 0.0f;
     float bilateral_weight_sum = 0.0f;
 
-    //int index = 0;
     for (int r = -kWindowRadius; r <= kWindowRadius; r += kWindowStep) {
       for (int c = -kWindowRadius; c <= kWindowRadius; c += kWindowStep) {
-       const float inv_z = 1.0f / z;
+        const float inv_z = 1.0f / z;
         const float norm_col_src = inv_z * col_src + 0.5f;
         const float norm_row_src = inv_z * row_src + 0.5f;
         
@@ -600,8 +590,6 @@ struct PhotoConsistencyCostComputer {
         col_src += tform_step[0];
         row_src += tform_step[3];
         z += tform_step[6];
-      	
- 
       }
 
       ref_image_base_idx += kWindowStep * shared_width;
@@ -629,17 +617,15 @@ struct PhotoConsistencyCostComputer {
     // Based on Jensen's Inequality for convex functions, the variance
     // should always be larger than 0. Do not make this threshold smaller.
     const float kMinVar = 1e-5f;
-    //printf("%f\n", ref_center_color);
     if (ref_color_var < kMinVar || src_color_var < kMinVar) {
       return kMaxCost;
-    } else {
+    } 
+    else {
       const float src_ref_color_covar =
           src_ref_color_sum - ref_color_sum * src_color_sum;
       const float src_ref_color_var = sqrt(ref_color_var * src_color_var);
-      return max(0.0f,
-                 min(kMaxCost, 1.0f - src_ref_color_covar / src_ref_color_var));
+      return max(0.0f,  min(kMaxCost, 1.0f - src_ref_color_covar / src_ref_color_var));
     }
-    //return 0.7f;
   }
 
  private:
@@ -1922,6 +1908,14 @@ __device__ inline void CheckBoardSampler(float* cost_map,
   }
 }
 
+__device__ inline int max_cu(int a, int b){
+  if(a > b){
+    return a;
+  }
+  return b;
+}
+
+
 template<int kWindowSize, int kWindowStep, bool kGeomConsistencyTerm = false>
 __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
                                           GpuMat<float> depth_map,
@@ -1971,16 +1965,81 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
           float minCost[8] = {pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost};
           int pt_index[16] = {row,col, row,col, row,col, row,col, row,col, row,col, row,col, row,col};
           
+          int s_up = S_step_.Get(row, col, 0);
+          int s_down = S_step_.Get(row, col, 1);
+          int s_left = S_step_.Get(row, col, 2);
+          int s_right = S_step_.Get(row, col, 3);
+          int v_up = S_step_.Get(row, col, 0);
+          int v_down = S_step_.Get(row, col, 1);
+          int v_left = S_step_.Get(row, col, 2);
+          int v_right = S_step_.Get(row, col, 3);
           // i. select the 8 hypo with min cost
           CheckBoardSampler(cost_map.GetPtr(), cost_map.GetPitch(), row, col, cost_map.GetHeight(), cost_map.GetWidth(), cost_map.GetDepth(), 
-                            V_step_.Get(row, col, 0), V_step_.Get(row, col, 1), V_step_.Get(row, col, 2), V_step_.Get(row, col, 3),
-                            S_step_.Get(row, col, 0), S_step_.Get(row, col, 1), S_step_.Get(row, col, 2), S_step_.Get(row, col, 3),
+                            v_up, v_down, v_left, v_right,
+                            s_up, s_down, s_left, s_right,
                             minCost, pt_index);
 
+          // s: up down left right; v: up down left right; 
+          bool hit[8] = {false, false, false, false, false, false, false, false};
+
           //update the search area
-          
+          for(int i = 0; i < 8; i++){
+            int pt_r = pt_index[2 * i];
+            int pt_c = pt_index[2 * i + 1];
+            // up S
+            if(pt_r < row && pt_c == col) {
+              S_step_.Set(row, col, 0, s_up + 1);
+              hit[0] = true;
+            }
+            // down S
+            else if(pt_r > row && pt_c == col) {
+              S_step_.Set(row, col, 1, s_down + 1);
+              hit[1] = true;
+            }
+            // left S
+            else if(pt_r == row && pt_c < col) {
+              S_step_.Set(row, col, 2, s_left + 1);
+              hit[2] = true;
+            }
+            // right S
+            else if(pt_r == row && pt_c > col) {
+              S_step_.Set(row, col, 3, s_right + 1);
+              hit[3] = true;
+            }
+            // up v
+            else if(pt_r < row && (pt_c - col == (row - 1) - pt_r || col - pt_c == (row - 1) - pt_r)) {
+              V_step_.Set(row, col, 0, v_up + 1);
+              hit[4] = true;
+            }
+            // down V
+            else if(pt_r > row && (pt_c - col == pt_r - (row + 1) || col - pt_c == pt_r - (row + 1))) {
+              V_step_.Set(row, col, 1, v_down + 1);
+              hit[5] = true;
+            }
+            // left V
+            else if(pt_c < col && (pt_r - row == (col - 1) - pt_c || row - pt_r == (col - 1) - pt_c)) {
+              V_step_.Set(row, col, 2, v_left + 1);
+              hit[6] = true;
+            }
+            // right V
+            else if(pt_c > col && (pt_r - row == pt_c - (col + 1) || row - pt_r == pt_c - (col + 1))) {
+              V_step_.Set(row, col, 3, v_right + 1);
+              hit[7] = true;
+            }
+          }
 
-
+          for(int i = 0; i < 8; i++){
+            if(!hit[i]){
+              if(i == 0) S_step_.Set(row, col, 0, max_cu(s_up - 1), 1);
+              else if(i == 1) S_step_.Set(row, col, 1, max_cu(s_down - 1), 1);
+              else if(i == 2) S_step_.Set(row, col, 2, max_cu(s_left - 1), 1);
+              else if(i == 3) S_step_.Set(row, col, 3, max_cu(s_right - 1), 1);
+              else if(i == 4) V_step_.Set(row, col, 0, max_cu(v_up - 1), 1);
+              else if(i == 5) V_step_.Set(row, col, 1, max_cu(v_down - 1), 1);
+              else if(i == 6) V_step_.Set(row, col, 2, max_cu(v_left - 1), 1);
+              else if(i == 7) V_step_.Set(row, col, 3, max_cu(v_right - 1), 1);
+            }
+          }
 
           // 9 hypo: 8 selected and the current
           float normals_0[3];
@@ -2142,45 +2201,42 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
   __syncthreads();
 }
 
+
+// same as general process, but with random hypo
 template<int kWindowSize, int kWindowStep>
 __global__ void RefineMent(GpuMat<float> cost_map,
-                      GpuMat<float> depth_map,
-                                      GpuMat<float> normal_map,
-                                      GpuMat<float> M_map,
-                                      GpuMat<int> last_important_view_map,
-                                      GpuMat<float> view_weight_map,
-                                      const GpuMat<float> ref_sum_image,
-                                         const GpuMat<float> ref_squared_sum_image,
-                                         GpuMat<curandState> rand_state_map,
-                      int iter,
-                      float sigma_spatial,
-                      float sigma_color,
-                      float depth_min,
-                      float depth_max) {
+                            GpuMat<float> depth_map,
+                            GpuMat<float> normal_map,
+                            GpuMat<float> M_map,
+                            GpuMat<int> last_important_view_map,
+                            GpuMat<float> view_weight_map,
+                            const GpuMat<float> ref_sum_image,
+                            const GpuMat<float> ref_squared_sum_image,
+                            GpuMat<curandState> rand_state_map,
+                            int iter,
+                            float sigma_spatial,
+                            float sigma_color,
+                            float depth_min,
+                            float depth_max,
+                            float geom_lamda = 0.0f) {
 
-    const int thread_Idx_x = threadIdx.x;
-    const int thread_Idx_y = threadIdx.y;
+  const int thread_Idx_x = threadIdx.x;
+  const int thread_Idx_y = threadIdx.y;
 
-    const int row = blockDim.y * blockIdx.y + threadIdx.y;
-    const int col = blockDim.x * blockIdx.x + threadIdx.x;
-    
-    //__shared__ float local_ref_image[9 * THREADS_PER_BLOCK * THREADS_PER_BLOCK];
-    __shared__ float local_ref_image[(THREADS_PER_BLOCK + 2 * (kWindowSize / 2)) * (THREADS_PER_BLOCK + 2 * (kWindowSize / 2))];
+  const int row = blockDim.y * blockIdx.y + threadIdx.y;
+  const int col = blockDim.x * blockIdx.x + threadIdx.x;
+  
+  __shared__ float local_ref_image[(THREADS_PER_BLOCK + 2 * (kWindowSize / 2)) * (THREADS_PER_BLOCK + 2 * (kWindowSize / 2))];
 
-    PhotoConsistencyCostComputer<kWindowSize, kWindowStep> pcc_computer(
-      sigma_spatial, sigma_color);
-    pcc_computer.local_ref_image = local_ref_image;
-    pcc_computer.row = row;
-    pcc_computer.col = col;
+  PhotoConsistencyCostComputer<kWindowSize, kWindowStep> pcc_computer(
+    sigma_spatial, sigma_color);
+  pcc_computer.local_ref_image = local_ref_image;
+  pcc_computer.row = row;
+  pcc_computer.col = col;
 
-    // Note that this must be executed even for pixels outside the borders,
-    // since pixels are used in the local neighborhood of the current pixel.
-    
-    //                                          
-    ACMMReadRefImageIntoSharedMemory<kWindowSize>(local_ref_image, row, col,thread_Idx_x, thread_Idx_y);
+  ACMMReadRefImageIntoSharedMemory<kWindowSize>(local_ref_image, row, col,thread_Idx_x, thread_Idx_y);
 
   if (col < cost_map.GetWidth() && row < cost_map.GetHeight()) {	
-    //depth_map.Set(row, col, local_ref_image[(thread_Idx_y + kWindowRadius)* (THREADS_PER_BLOCK + 2 * kWindowRadius) + kWindowRadius + thread_Idx_x]);
       pcc_computer.local_ref_sum = ref_sum_image.Get(row, col);
       pcc_computer.local_ref_squared_sum = ref_squared_sum_image.Get(row, col);
 
@@ -2202,29 +2258,23 @@ __global__ void RefineMent(GpuMat<float> cost_map,
 
       rnd_depth = GenerateRandomDepth(depth_min, depth_max, &rand_state);
       prb_depth = PerturbDepth(perturbation, cur_depth, &rand_state);
-          
-
-        //0: prb_norm,rnd_depth
-       //1: rnd_norm,rnd_depth
-       //2: cur_norm,rnd_depth
-       //3: prb_norm,prb_depth
-       //4: rnd_norm,prb_depth
-       //5: cur_norm,prb_depth
-       //6: prb_norm,cur_depth
-       //7: rnd_norm,cur_depth
+      
+      //0: prb_norm,rnd_depth
+      //1: rnd_norm,rnd_depth
+      //2: cur_norm,rnd_depth
+      //3: prb_norm,prb_depth
+      //4: rnd_norm,prb_depth
+      //5: cur_norm,prb_depth
+      //6: prb_norm,cur_depth
+      //7: rnd_norm,cur_depth
       //8: cur_norm,cur_depth	
-
-       const float hypo_depths[9] = {rnd_depth, rnd_depth, rnd_depth, prb_depth, prb_depth, prb_depth, cur_depth, cur_depth, cur_depth};
+      const float hypo_depths[9] = {rnd_depth, rnd_depth, rnd_depth, prb_depth, prb_depth, prb_depth, cur_depth, cur_depth, cur_depth};
       const float* normals[9] = {prb_normal, rnd_normal, cur_normal, prb_normal, rnd_normal, cur_normal, prb_normal, rnd_normal, cur_normal};
     
       size_t N = cost_map.GetDepth();
       /*
       * ii. Compute M Matrix
       */
-      // float dis_cost = 0.0f;
-      // int index = 0;
-      // float M[256];
-      // float ViewWeight[32];
       for (size_t i = 0; i < 9; i++) {
         pcc_computer.normal = normals[i];
         pcc_computer.depth = hypo_depths[i];
@@ -2235,16 +2285,6 @@ __global__ void RefineMent(GpuMat<float> cost_map,
               M_map.Set(row, col, N * i + image_idx, c);
             }
       }
-
-      // for (int i = 0; i < 9; i++) {
-      // 	for (int image_idx = 0; image_idx < N; ++image_idx) {
-      // 		dis_cost += M_map.Get(row, col, N * i + image_idx);
-      // 	}
-      // }
-      // dis_cost = dis_cost/(9*N);
-      //printf("dis_cost:%f\n", dis_cost);
-      //depth_map.Set(row, col, dis_cost);
-
       /*
       * iii. Computer viewWeight
       */
@@ -2260,7 +2300,6 @@ __global__ void RefineMent(GpuMat<float> cost_map,
       int lastImportant = -1;
 
       for (size_t image_idx = 0; image_idx < N; image_idx++) {
-
         float weight = 0.0f;
         int S_good_size = 0;
         float S_good_score = 0.0f;
@@ -2271,7 +2310,6 @@ __global__ void RefineMent(GpuMat<float> cost_map,
           //formula (4)
           if (mij < good_threshold) {
             S_good_score += exp(-mij * mij / (2 * viewWeight_belta * viewWeight_belta));
-            
             S_good_size += 1;
           }
           if (mij > bad_threshold) {
@@ -2286,9 +2324,8 @@ __global__ void RefineMent(GpuMat<float> cost_map,
         else {
           I = 0;
         }
-        //printf("S_good_size %d\n", S_good_size);
-        //printf("S_bad_size %d\n", S_bad_size);
-        // //formula (5)
+        
+        //formula (5)
         if (S_good_size > viewWeight_n1 && S_bad_size < viewWeight_n2) {
           S_good_score = S_good_score / S_good_size;
           weight = (I + 1) * S_good_score;
@@ -2296,7 +2333,7 @@ __global__ void RefineMent(GpuMat<float> cost_map,
         else {
           weight = 0.2 * (I);
         }
-    //printf("mij %f\n", weight);
+
         if (weight > maxWeight) {
           lastImportant = image_idx;
           maxWeight = weight;
@@ -2304,15 +2341,6 @@ __global__ void RefineMent(GpuMat<float> cost_map,
         view_weight_map.Set(row, col, image_idx, weight);
       }
       last_important_view_map.Set(row, col, lastImportant);
-      
-      // dis_cost = 0;
-      // for (int image_idx = 0; image_idx < N; ++image_idx) {
-      // 	dis_cost += view_weight_map.Get(row, col, image_idx);
-      // }
-      
-      // dis_cost = dis_cost/(N);
-      // printf("dis %f\n", dis_cost);
-      // depth_map.Set(row, col, dis_cost);
 
       float minScore = pcc_computer.kMaxCost;
       int minHypo = 8;
@@ -2323,9 +2351,14 @@ __global__ void RefineMent(GpuMat<float> cost_map,
         
         for (size_t image_idx = 0; image_idx < N; image_idx++) {
           float mij = M_map.Get(row, col, N * i + image_idx);
+          float eij = 0.0f;
           float viewWeight = view_weight_map.Get(row, col, image_idx);
           if (mij < pcc_computer.kMaxCost) {
-            score += mij * viewWeight;
+            if(kGeomConsistencyTerm){
+              // if use geom, compute reproject error
+              eij = ComputeGeomConsistencyCost(row, col, hypo_depths[i], image_idx, 2.0f);
+            }
+            score += (mij + geom_lamda * eij) * viewWeight;
             weight_sum += viewWeight;
           }
         }
@@ -2341,7 +2374,7 @@ __global__ void RefineMent(GpuMat<float> cost_map,
           }
         }
       }
-      //printf("minHypo %d\n", minHypo);
+
       const float *best_normal = normals[minHypo];
       float best_depth = hypo_depths[minHypo];
       
@@ -2375,7 +2408,7 @@ void PatchMatchCuda::ACMMRunWithWindowSizeAndStep() {
     init_timer.Print("Initialization");
 
     bool kGeomConsistencyTerm = false;
-    if(options_.){
+    if(options_.geom_consistency){
       kGeomConsistencyTerm = true;
     }
     for(int iter = 0; iter < options_.num_iterations; ++iter) {
@@ -2387,11 +2420,11 @@ void PatchMatchCuda::ACMMRunWithWindowSizeAndStep() {
       CUDA_SYNC_AND_CHECK();
       ACMMCheckerBoard_cu<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
       ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-          options_.sigma_color, options_.depth_min, options_.depth_max, false);
+          options_.sigma_color, options_.depth_min, options_.depth_max, false, options_.geom_consistency_regularizer);
       CUDA_SYNC_AND_CHECK();
       RefineMent<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
       ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
-          options_.sigma_color, options_.depth_min, options_.depth_max);
+          options_.sigma_color, options_.depth_min, options_.depth_max, options_.geom_consistency_regularizer);
       CUDA_SYNC_AND_CHECK();
       iter_timer.Print("Iteration " + std::to_string(iter + 1));
     }
