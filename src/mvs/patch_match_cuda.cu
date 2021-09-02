@@ -527,6 +527,121 @@ struct PhotoConsistencyCostComputer {
     }
   }
 
+  __device__ inline float ACMMCompute_shared(const int thread_idx_x, const int thread_idx_y) const {
+  	
+
+    float tform[9];
+    ComposeHomography(src_image_idx, row, col, depth, normal, tform);
+
+    float tform_step[9];
+    for (int i = 0; i < 9; ++i) {
+      tform_step[i] = kWindowStep * tform[i];
+    }
+
+    const int row_start = row - kWindowRadius;
+    const int col_start = col - kWindowRadius;
+
+    float col_src = tform[0] * col_start + tform[1] * row_start + tform[2];
+    float row_src = tform[3] * col_start + tform[4] * row_start + tform[5];
+    float z = tform[6] * col_start + tform[7] * row_start + tform[8];
+    float base_col_src = col_src;
+    float base_row_src = row_src;
+    float base_z = z;
+
+    // shared memory
+ //    const int shared_width = 3 * THREADS_PER_BLOCK;
+ //    const int shared_idx = THREADS_PER_BLOCK + thread_idx_x;
+	// const int shared_idy = THREADS_PER_BLOCK + thread_idx_y;
+	// const int cur_idx = shared_idy * shared_width + shared_idx;
+ //    int ref_image_idx = cur_idx - kWindowRadius * shared_width- kWindowRadius;
+ //    int ref_image_base_idx = ref_image_idx;
+    const int shared_width = (THREADS_PER_BLOCK + 2 * kWindowRadius);
+    const int cur_idx = (thread_idx_y + kWindowRadius) * shared_width+ kWindowRadius + thread_idx_x;
+
+    int ref_image_idx = cur_idx - kWindowRadius * shared_width- kWindowRadius;
+    int ref_image_base_idx = ref_image_idx;
+
+    const float ref_center_color = local_ref_image[cur_idx];
+    
+    const float ref_color_sum = local_ref_sum;
+    const float ref_color_squared_sum = local_ref_squared_sum;
+    float src_color_sum = 0.0f;
+    float src_color_squared_sum = 0.0f;
+    float src_ref_color_sum = 0.0f;
+    float bilateral_weight_sum = 0.0f;
+
+    //int index = 0;
+    for (int r = -kWindowRadius; r <= kWindowRadius; r += kWindowStep) {
+      for (int c = -kWindowRadius; c <= kWindowRadius; c += kWindowStep) {
+       const float inv_z = 1.0f / z;
+        const float norm_col_src = inv_z * col_src + 0.5f;
+        const float norm_row_src = inv_z * row_src + 0.5f;
+        
+        const float ref_color = local_ref_image[ref_image_idx];//tex2D(ref_image_texture, col + c, row + r);//
+        const float src_color = tex2DLayered(src_images_texture, norm_col_src,
+                                             norm_row_src, src_image_idx);
+
+        const float bilateral_weight = bilateral_weight_computer_.Compute(
+            r, c, ref_center_color, ref_color);
+
+        const float bilateral_weight_src = bilateral_weight * src_color;
+
+        src_color_sum += bilateral_weight_src;
+        src_color_squared_sum += bilateral_weight_src * src_color;
+        src_ref_color_sum += bilateral_weight_src * ref_color;
+        bilateral_weight_sum += bilateral_weight;
+
+        ref_image_idx += kWindowStep;
+
+        // Accumulate warped source coordinates per row to reduce numerical
+        // errors. Note that this is necessary since coordinates usually are in
+        // the order of 1000s as opposed to the color values which are
+        // normalized to the range [0, 1].
+        col_src += tform_step[0];
+        row_src += tform_step[3];
+        z += tform_step[6];
+      	
+ 
+      }
+
+      ref_image_base_idx += kWindowStep * shared_width;
+      ref_image_idx = ref_image_base_idx;
+
+      base_col_src += tform_step[1];
+      base_row_src += tform_step[4];
+      base_z += tform_step[7];
+
+      col_src = base_col_src;
+      row_src = base_row_src;
+      z = base_z;
+    }
+
+    const float inv_bilateral_weight_sum = 1.0f / bilateral_weight_sum;
+    src_color_sum *= inv_bilateral_weight_sum;
+    src_color_squared_sum *= inv_bilateral_weight_sum;
+    src_ref_color_sum *= inv_bilateral_weight_sum;
+
+    const float ref_color_var =
+        ref_color_squared_sum - ref_color_sum * ref_color_sum;
+    const float src_color_var =
+        src_color_squared_sum - src_color_sum * src_color_sum;
+
+    // Based on Jensen's Inequality for convex functions, the variance
+    // should always be larger than 0. Do not make this threshold smaller.
+    const float kMinVar = 1e-5f;
+    //printf("%f\n", ref_center_color);
+    if (ref_color_var < kMinVar || src_color_var < kMinVar) {
+      return kMaxCost;
+    } else {
+      const float src_ref_color_covar =
+          src_ref_color_sum - ref_color_sum * src_color_sum;
+      const float src_ref_color_var = sqrt(ref_color_var * src_color_var);
+      return max(0.0f,
+                 min(kMaxCost, 1.0f - src_ref_color_covar / src_ref_color_var));
+    }
+    //return 0.7f;
+  }
+
  private:
   const BilateralWeightComputer bilateral_weight_computer_;
 };
@@ -1176,9 +1291,17 @@ PatchMatchCuda::~PatchMatchCuda() {
 }
 
 void PatchMatchCuda::Run() {
-#define CASE_WINDOW_RADIUS(window_radius, window_step)              \
-  case window_radius:                                               \
-    RunWithWindowSizeAndStep<2 * window_radius + 1, window_step>(); \
+#define CASE_WINDOW_RADIUS(window_radius, window_step)                        \
+  case window_radius:                                                         \
+    if (options_.pm_algo == "COLMAP"){                                        \
+      std::cout << "Using COLMAP Algo." << std::endl;                         \
+      RunWithWindowSizeAndStep<2 * window_radius + 1, window_step>();         \
+    }                                                                         \
+    else if (options_.pm_algo == "ACMM"){                                     \
+      std::cout << "Using ACMM Algo." << std::endl;                           \
+      ACMMRunWithWindowSizeAndStep<2 * window_radius + 1, window_step>();     \
+    }                                                                         \
+    else std::cerr << "Error: Algo not supported" << std::endl;               \
     break;
 
 #define CASE_WINDOW_STEP(window_step)                                 \
@@ -1392,6 +1515,891 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
 
   total_timer.Print("Total");
 }
+
+////////////////////////////////////////////////////////////////////////////////////////   ACMM ///////////////////////////////////////////////////////////////////////////////////////////
+template <int kWindowSize>
+__device__ inline void ACMMReadRefImageIntoSharedMemory(float* local_image,
+                                                          const int row,
+                                                          const int col,
+                                                          const int thread_idx_x,
+                                                          const int thread_idx_y) {
+  // For the first row, read the entire block into shared memory. For all
+  // consecutive rows, it is only necessary to shift the rows in shared memory
+  // up by one element and then read in a new row at the bottom of the shared
+  // memory. Note that this assumes that the calling loop starts with the first
+  // row and then consecutively reads in a new row.  
+  const int kWindowRadius = kWindowSize / 2;
+  const int base_start_idx = kWindowRadius * (THREADS_PER_BLOCK + 2 * kWindowRadius);
+  const int cur_idx = base_start_idx + thread_idx_y * (THREADS_PER_BLOCK + 2 * kWindowRadius) + kWindowRadius + thread_idx_x;
+  
+  //read the left data exceed the local image
+  if(thread_idx_x == 0){
+    for(int i = 1; i <= kWindowRadius; i++){
+      local_image[cur_idx - i] = tex2D(ref_image_texture, col - i, row);
+    }
+  }
+
+  //read the right data exceed the local image
+  if(thread_idx_x == THREADS_PER_BLOCK - 1){
+    for(int i = 1; i <= kWindowRadius; i++){
+      local_image[cur_idx + i] = tex2D(ref_image_texture, col + i, row);
+    }
+  }
+
+  //read the up data exceed the local image
+  if(thread_idx_y == 0){
+    for(int i = 1; i <= kWindowRadius; i++){
+      local_image[cur_idx - i * (THREADS_PER_BLOCK + 2 * kWindowRadius)] = tex2D(ref_image_texture, col, row - i);
+    }
+  }
+
+  //read the down data exceed the local image
+  if(thread_idx_y == THREADS_PER_BLOCK - 1){
+    for(int i = 1; i <= kWindowRadius; i++){
+      local_image[cur_idx + i * (THREADS_PER_BLOCK + 2 * kWindowRadius)] = tex2D(ref_image_texture, col, row + i);
+    }
+  }
+
+  //read the left up data exceed the local image
+  if(thread_idx_x == 0 && thread_idx_y == 0){
+    for(int i = 1; i <= kWindowRadius; i++){
+      for(int j = 1; j <= kWindowRadius; j++)
+        local_image[cur_idx - i * (THREADS_PER_BLOCK + 2 * kWindowRadius) - j] = tex2D(ref_image_texture, col - j, row - i);
+    }
+  }
+
+  //read the left down data exceed the local image
+  if(thread_idx_x == 0 && thread_idx_y == THREADS_PER_BLOCK - 1){
+    for(int i = 1; i <= kWindowRadius; i++){
+      for(int j = 1; j <= kWindowRadius; j++)
+        local_image[cur_idx + i * (THREADS_PER_BLOCK + 2 * kWindowRadius) - j] = tex2D(ref_image_texture, col - j, row + i);
+    }
+  }
+
+  //read the right up data exceed the local image
+  if(thread_idx_x == THREADS_PER_BLOCK - 1 && thread_idx_y == 0){
+    for(int i = 1; i <= kWindowRadius; i++){
+      for(int j = 1; j <= kWindowRadius; j++)
+        local_image[cur_idx - i * (THREADS_PER_BLOCK + 2 * kWindowRadius) + j] = tex2D(ref_image_texture, col + j, row - i);
+    }
+  }
+
+  //read the right down data exceed the local image
+  if(thread_idx_x == THREADS_PER_BLOCK - 1 && thread_idx_y == THREADS_PER_BLOCK - 1){
+    for(int i = 1; i <= kWindowRadius; i++){
+      for(int j = 1; j <= kWindowRadius; j++)
+        local_image[cur_idx + i * (THREADS_PER_BLOCK + 2 * kWindowRadius) + j] = tex2D(ref_image_texture, col + j, row + i);
+    }
+  }
+
+  // this pixel
+  local_image[cur_idx] = tex2D(ref_image_texture, col, row);
+
+  //sync
+  __syncthreads();
+}
+
+template <int kWindowSize, int kWindowStep>
+__global__ void ACMMComputeInitialCost(GpuMat<float> cost_map,
+                                        GpuMat<float> depth_map,
+                                        const GpuMat<float> normal_map,
+                                        const GpuMat<float> ref_sum_image,
+                                        const GpuMat<float> ref_squared_sum_image,
+                                        const float sigma_spatial,
+                                        const float sigma_color) {
+    const int thread_Idx_x = threadIdx.x;
+    const int thread_Idx_y = threadIdx.y;
+
+    const int row = blockDim.y * blockIdx.y + threadIdx.y;
+    const int col = blockDim.x * blockIdx.x + threadIdx.x;
+  
+    __shared__ float local_ref_image[(THREADS_PER_BLOCK + 2 * (kWindowSize / 2)) * (THREADS_PER_BLOCK + 2 * (kWindowSize / 2))];
+
+    PhotoConsistencyCostComputer<kWindowSize, kWindowStep> pcc_computer(
+      sigma_spatial, sigma_color);
+    pcc_computer.local_ref_image = local_ref_image;
+    pcc_computer.row = row;
+    pcc_computer.col = col;
+
+    float normal[3];
+    pcc_computer.normal = normal;
+
+
+    // // Note that this must be executed even for pixels outside the borders,
+    // // since pixels are used in the local neighborhood of the current pixel.
+
+    ACMMReadRefImageIntoSharedMemory<kWindowSize>(local_ref_image, row, col, thread_Idx_x, thread_Idx_y);
+
+    if (col < cost_map.GetWidth() && row < cost_map.GetHeight()) {
+        pcc_computer.depth = depth_map.Get(row, col);
+        normal_map.GetSlice(row, col, normal);
+        
+        pcc_computer.local_ref_sum = ref_sum_image.Get(row, col);
+        pcc_computer.local_ref_squared_sum = ref_squared_sum_image.Get(row, col);
+
+        for (int image_idx = 0; image_idx < cost_map.GetDepth(); ++image_idx) {
+          pcc_computer.src_image_idx = image_idx;
+          cost_map.Set(row, col, image_idx, pcc_computer.ACMMCompute_shared(thread_Idx_x, thread_Idx_y));
+        }
+    }
+}
+
+template <typename T>
+__device__ inline T Get_cu(T* array_ptr_, const size_t row, const size_t col,
+                            const size_t slice, const size_t height_, const size_t pitch_) {
+  return *((T*)((char*)array_ptr_ + pitch_ * (slice * height_ + row)) + col);
+}
+
+template <typename T>
+__device__ inline void Set_cu(T* array_ptr_, const size_t row, const size_t col,
+                            const size_t slice, const size_t height_, const size_t pitch_, T value) {
+   *((T*)((char*)array_ptr_ + pitch_ * (slice * height_ + row)) + col) = value;
+}
+
+__device__ inline float AvgCost(float* cost_map, const size_t cost_map_pitch, const size_t cost_map_height, const size_t cost_map_depth, int row, int col){
+  float cur_cost = 0.0f;
+  //printf("%d\n", cost_map_depth);
+  for(size_t image_idx = 0; image_idx < cost_map_depth; image_idx++){
+    cur_cost += Get_cu<float>(cost_map, row, col, image_idx, cost_map_height, cost_map_pitch);
+    //cur_cost += image_idx;
+  }
+  cur_cost /= cost_map_depth;
+  return cur_cost;
+}
+
+__device__ inline void adjustFloatMaxHeap(float * minCost, int * pt_index, int root) {
+  while (root < 8) {
+    int lch = 2 * root + 1;
+    int rch = lch + 1;
+    int index = root;
+
+    if (rch < 8 && (minCost[rch] > minCost[index]) ) {
+      index = rch;
+    }
+    if (lch < 8 && (minCost[lch] > minCost[index]) ) {
+      index = lch;
+    }
+
+    if (index != root) {
+
+      float tmp = minCost[index];
+      minCost[index] = minCost[root];
+      minCost[root] = tmp;
+
+      int pt_row = pt_index[2 * index];
+      int pt_col = pt_index[2 * index + 1];
+      pt_index[2 * index] = pt_index[2 * root];
+      pt_index[2 * index + 1] = pt_index[2 * root + 1];
+      pt_index[2 * root] = pt_row;
+      pt_index[2 * root + 1] = pt_col;
+
+      root = index;
+    }
+    else {
+      break;
+    }
+  }
+}
+
+__device__ inline void CheckBoardSampler(float* cost_map,
+                                          size_t cost_map_pitch, 
+                                          int row, int col,
+                                          const size_t rows, const size_t cols, int neighbors,
+                                          int upVstep, int downVstep, int leftVstep, int rightVstep,
+                                          int upStripStep, int downStripStep, int leftStripStep, int rightStripStep,
+                                          float* minCost,
+                                          int* pt_index){
+  {
+    //UP
+    //Up V sample
+    if (row - 1 >= 0) {
+      float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row - 1, col);
+      if (cost < minCost[0]) {
+        minCost[0] = cost;
+        pt_index[0] = row - 1;
+        pt_index[1] = col;
+        adjustFloatMaxHeap(minCost, pt_index, 0);
+      }
+    }
+    for (int i = 1; i <= upVstep; i++) {
+      if (row - 1 - i >= 0) {
+        if (col - i >= 0) {
+          float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row - 1 - i, col - i);
+          if (cost < minCost[0]) {
+            minCost[0] = cost;
+            pt_index[0] = row - 1 - i;
+            pt_index[1] = col - i;
+            adjustFloatMaxHeap(minCost, pt_index, 0);
+          }
+        }
+        if (col + i < cols) {
+           float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row - 1 - i, col + i);
+          if (cost < minCost[0]) {
+            minCost[0] = cost;
+            pt_index[0] = row - 1 - i;
+            pt_index[1] = col + i;
+            adjustFloatMaxHeap(minCost, pt_index, 0);
+          }
+        }
+      }
+      else {
+        break;
+      }
+    }
+    //Up Strip Sample
+    for (int i = 0; i < upStripStep; i++) {
+      if (row - 3 - 2 * i >= 0) {
+        float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row - 3 - 2 * i, col);
+        if (cost < minCost[0]) {
+          minCost[0] = cost;
+          pt_index[0] = row - 3 - 2 * i;
+          pt_index[1] = col;
+          adjustFloatMaxHeap(minCost, pt_index, 0);
+        }
+      }
+      else {
+        break;
+      }
+    }
+  }
+  {
+    //DOWN
+    if (row + 1 < rows) {
+      float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row + 1, col);
+      if (cost < minCost[0]) {
+        minCost[0] = cost;
+        pt_index[0] = row + 1;
+        pt_index[1] = col;
+        adjustFloatMaxHeap(minCost, pt_index, 0);
+      }
+    }
+    for (int i = 1; i <= downVstep; i++) {
+      if (row + 1 + i < rows) {
+        if (col - i >= 0) {
+          float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row + 1 + i, col - i);
+          if (cost < minCost[0]) {
+            minCost[0] = cost;
+            pt_index[0] = row + 1 + i;
+            pt_index[1] = col - i;
+            adjustFloatMaxHeap(minCost, pt_index, 0);
+          }
+        }
+        if (col + i < cols) {
+          float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row + 1 + i, col + i);
+          if (cost < minCost[0]) {
+            minCost[0] = cost;
+            pt_index[0] = row + 1 + i;
+            pt_index[1] = col + i;
+            adjustFloatMaxHeap(minCost, pt_index, 0);
+          }
+        }
+      }
+      else {
+        break;
+      }
+    }
+    //Down Strip sample
+    for (int i = 0; i < downStripStep; i++) {
+      if (row + 3 + 2 * i < rows) {
+        float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row + 3 + 2 * i, col);
+        if (cost < minCost[0]) {
+          minCost[0] = cost;
+          pt_index[0] = row + 3 + 2 * i;
+          pt_index[1] = col;
+          adjustFloatMaxHeap(minCost, pt_index, 0);
+        }
+      }
+      else {
+        break;
+      }
+    }
+  }
+  {
+    //LEFT
+    //Left V sample
+    if (col - 1 >= 0) {
+      float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row, col - 1);
+      if (cost < minCost[0] ) {
+        minCost[0] = cost;
+        pt_index[0] = row;
+        pt_index[1] = col - 1;
+        adjustFloatMaxHeap(minCost, pt_index, 0);
+      }
+    }
+    for (int i = 1; i <= leftVstep; i++) {
+      if (col - 1 - i >= 0) {
+        if (row - i >= 0) {
+          float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row - i, col - 1 - i);
+          if (cost < minCost[0]) {
+            minCost[0] = cost;
+            pt_index[0] = row - i;
+            pt_index[1] = col - 1 - i;
+            adjustFloatMaxHeap(minCost, pt_index, 0);
+          }
+        }
+        if (row + i < rows) {
+          float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row + i, col - 1 - i);
+          if (cost < minCost[0]) {
+            minCost[0] = cost;
+            pt_index[0] = row + i;
+            pt_index[1] = col - 1 - i;
+            adjustFloatMaxHeap(minCost, pt_index, 0);
+          }
+        }
+      }
+      else {
+        break;
+      }
+    }
+    //Left Strip sample
+    for (int i = 0; i < leftStripStep; i++) {
+      if (col - 3 - 2 * i >= 0) {
+        float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row, col - 3 - 2 * i);
+        if (cost < minCost[0]) {
+          minCost[0] = cost;
+          pt_index[0] = row;
+          pt_index[1] = col - 3 - 2 * i;
+          adjustFloatMaxHeap(minCost, pt_index, 0);
+        }
+      }
+      else {
+        break;
+      }
+    }
+  }
+  {
+    //RIGHT
+    //Right V sample
+    if (col + 1 < cols) {
+      float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row, col + 1);
+      if (cost < minCost[0]) {
+        minCost[0] = cost;
+        pt_index[0] = row;
+        pt_index[1] = col + 1;
+        adjustFloatMaxHeap(minCost, pt_index, 0);
+      }
+    }
+    for (int i = 1; i <= rightVstep; i++) {
+      if (col + 1 + i < cols) {
+        if (row - i >= 0) {
+          float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row - i, col + 1 + i);
+          if (cost < minCost[0]) {
+            minCost[0] = cost;
+            pt_index[0] = row - i;
+            pt_index[1] = col + 1 + i;
+            adjustFloatMaxHeap(minCost, pt_index, 0);
+          }
+        }
+        if (row + i < rows) {
+          float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row + i, col + 1 + i);
+          if (cost < minCost[0]) {
+            minCost[0] = cost;
+            pt_index[0] = row + i;
+            pt_index[1] = col + 1 + i;
+            adjustFloatMaxHeap(minCost, pt_index, 0);
+          }
+        }
+      }
+      else {
+        break;
+      }
+    }
+    //Right Strip sample
+    for (int i = 0; i < rightStripStep; i++) {
+      if (col + 3 + 2 * i < cols) {
+        float cost = AvgCost(cost_map, cost_map_pitch, rows, neighbors, row, col + 3 + 2 * i);
+        if (cost < minCost[0]) {
+          minCost[0] = cost;
+          pt_index[0] = row;
+          pt_index[1] = col + 3 + 2 * i;
+          adjustFloatMaxHeap(minCost, pt_index, 0);
+        }
+      }
+      else {
+        break;
+      }
+    }
+  }
+}
+
+template<int kWindowSize, int kWindowStep, bool kGeomConsistencyTerm = false>
+__global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
+                                          GpuMat<float> depth_map,
+                                          GpuMat<float> normal_map,
+                                          GpuMat<float> M_map,
+                                          GpuMat<int> last_important_view_map,
+                                          GpuMat<float> view_weight_map,
+                                          const GpuMat<float> ref_sum_image,
+                                          const GpuMat<float> ref_squared_sum_image,
+                                          GpuMat<curandState> rand_state_map,
+                                          int iter,
+                                          float sigma_spatial,
+                                          float sigma_color,
+                                          float depth_min,
+                                          float depth_max
+                                          bool isBlack,
+                                          float geom_lamda = 0.0f) {
+
+    const int thread_Idx_x = threadIdx.x;
+    const int thread_Idx_y = threadIdx.y;
+
+    const int row = blockDim.y * blockIdx.y + threadIdx.y;
+    const int col = blockDim.x * blockIdx.x + threadIdx.x;
+    
+    __shared__ float local_ref_image[(THREADS_PER_BLOCK + 2 * (kWindowSize / 2)) * (THREADS_PER_BLOCK + 2 * (kWindowSize / 2))];
+
+    PhotoConsistencyCostComputer<kWindowSize, kWindowStep> pcc_computer(
+      sigma_spatial, sigma_color);
+    pcc_computer.local_ref_image = local_ref_image;
+    pcc_computer.row = row;
+    pcc_computer.col = col;
+
+    // Note that this must be executed even for pixels outside the borders,
+    // since pixels are used in the local neighborhood of the current pixel.
+    
+    ACMMReadRefImageIntoSharedMemory<kWindowSize>(local_ref_image, row, col, thread_Idx_x, thread_Idx_y);
+    
+  
+    if(isBlack && ((threadIdx.x % 2 == 0 && threadIdx.y % 2 == 0) || (threadIdx.x % 2 != 0 && threadIdx.y % 2 != 0)) ||
+        !isBlack && ((threadIdx.x % 2 != 0 && threadIdx.y % 2 == 0) || (threadIdx.x % 2 == 0 && threadIdx.y % 2 != 0))){
+      // process black pixel
+      if (col < cost_map.GetWidth() && row < cost_map.GetHeight()) {
+          pcc_computer.local_ref_sum = ref_sum_image.Get(row, col);
+          pcc_computer.local_ref_squared_sum = ref_squared_sum_image.Get(row, col);
+
+          // 8 hypo and correspond uv
+          float minCost[8] = {pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost, pcc_computer.kMaxCost};
+          int pt_index[16] = {row,col, row,col, row,col, row,col, row,col, row,col, row,col, row,col};
+          
+          // i. select the 8 hypo with min cost
+          CheckBoardSampler(cost_map.GetPtr(), cost_map.GetPitch(), row, col, cost_map.GetHeight(), cost_map.GetWidth(), cost_map.GetDepth(), 
+                            V_step_.Get(row, col, 0), V_step_.Get(row, col, 1), V_step_.Get(row, col, 2), V_step_.Get(row, col, 3),
+                            S_step_.Get(row, col, 0), S_step_.Get(row, col, 1), S_step_.Get(row, col, 2), S_step_.Get(row, col, 3),
+                            minCost, pt_index);
+
+          //update the search area
+          
+
+
+
+          // 9 hypo: 8 selected and the current
+          float normals_0[3];
+          float normals_1[3];
+          float normals_2[3];
+          float normals_3[3];
+          float normals_4[3];
+          float normals_5[3];
+          float normals_6[3];
+          float normals_7[3];
+          float normals_8[3];
+          normal_map.GetSlice(pt_index[2 * 0], pt_index[2 * 0 + 1], normals_0);
+          normal_map.GetSlice(pt_index[2 * 1], pt_index[2 * 1 + 1], normals_1);
+          normal_map.GetSlice(pt_index[2 * 2], pt_index[2 * 2 + 1], normals_2);
+          normal_map.GetSlice(pt_index[2 * 3], pt_index[2 * 3 + 1], normals_3);
+          normal_map.GetSlice(pt_index[2 * 4], pt_index[2 * 4 + 1], normals_4);
+          normal_map.GetSlice(pt_index[2 * 5], pt_index[2 * 5 + 1], normals_5);
+          normal_map.GetSlice(pt_index[2 * 6], pt_index[2 * 6 + 1], normals_6);
+          normal_map.GetSlice(pt_index[2 * 7], pt_index[2 * 7 + 1], normals_7);
+          normal_map.GetSlice(row, col, normals_8);	
+          const float* normals[9] = {normals_0, normals_1, normals_2, normals_3, normals_4, normals_5, normals_6, normals_7, normals_8};
+          
+          // N: neighbor view
+          size_t N = cost_map.GetDepth();
+
+          /*
+          * ii. Compute M Matrix
+          */
+          for (size_t i = 0; i < 9; i++) {
+            pcc_computer.normal = normals[i];
+            if(i == 8){
+              pcc_computer.depth = depth_map.Get(row, col);
+            }
+            else{
+              pcc_computer.depth = depth_map.Get(pt_index[2 * i], pt_index[2 * i + 1]);
+            }
+          
+            for (size_t image_idx = 0; image_idx < N; image_idx++) {
+                  pcc_computer.src_image_idx = image_idx;
+                  float c = pcc_computer.ACMMCompute_shared(thread_Idx_x, thread_Idx_y);
+                  M_map.Set(row, col, N * i + image_idx, c);
+            }
+          }
+
+          /*
+          * iii. Computer viewWeight
+          */
+          float init_good_threshold = 0.8f;
+          float bad_threshold = 1.2f;
+          int viewWeight_n1 = 2;
+          int viewWeight_n2 = 3;
+          float viewWeight_alpha = 90.0f;
+          float viewWeight_belta = 0.3f;
+
+          float good_threshold =init_good_threshold * exp(-iter * iter / viewWeight_alpha);
+          float maxWeight = 0.0f;
+          int lastImportant = -1;
+
+          for (size_t image_idx = 0; image_idx < N; image_idx++) {
+            float weight = 0.0f;
+            int S_good_size = 0;
+            float S_good_score = 0.0f;
+            int S_bad_size = 0;
+
+            for (size_t i = 0; i < 9; i++) {
+              float mij = M_map.Get(row, col, N * i + image_idx);
+              //formula (4)
+              if (mij < good_threshold) {
+                S_good_score += exp(-mij * mij / (2 * viewWeight_belta * viewWeight_belta));
+                S_good_size += 1;
+              }
+              if (mij > bad_threshold) {
+                S_bad_size += 1;
+              }
+            }
+      
+            int I = 1;
+            if (image_idx == last_important_view_map.Get(row, col)) {
+              I = 1;
+            }
+            else {
+              I = 0;
+            }
+            
+            //formula (5)
+            if (S_good_size > viewWeight_n1 && S_bad_size < viewWeight_n2) {
+              S_good_score = S_good_score / S_good_size;
+              weight = (I + 1) * S_good_score;
+            }
+            else {
+              weight = 0.2 * (I);
+            }
+            // update the lastImportant if this is more important view
+            if (weight > maxWeight) {
+              lastImportant = image_idx;
+              maxWeight = weight;
+            }
+            view_weight_map.Set(row, col, image_idx, weight);
+          }
+          last_important_view_map.Set(row, col, lastImportant);
+
+          // select the hypo with min cost
+          float minScore = pcc_computer.kMaxCost;
+          int minHypo = 8;
+          float e_depth = 0.0f;
+          for (int i = 0; i < 9; i++) {
+            float score = 0.0f;
+            float weight_sum = 0.0f;
+            
+            if(kGeomConsistencyTerm){
+              // if use geom, get each hypo depth to reproject
+              if(i != 8){
+                e_depth = depth_map.Get(pt_index[2 * i], pt_index[2 * i + 1]);
+              }
+              else{
+                e_depth = depth_map.Get(row, col);
+              }
+            }
+            for (size_t image_idx = 0; image_idx < N; image_idx++) {
+              float mij = M_map.Get(row, col, N * i + image_idx);
+              float eij = 0.0f;
+              if(kGeomConsistencyTerm){
+                // if use geom, compute reproject error
+                eij = ComputeGeomConsistencyCost(row, col, e_depth, image_idx, 2.0f);
+              }
+              float viewWeight = view_weight_map.Get(row, col, image_idx);
+              if (mij < pcc_computer.kMaxCost) {
+                score += (mij + geom_lamda * eij) * viewWeight;
+                weight_sum += viewWeight;
+              }
+            }
+
+            if (weight_sum != 0.0f) {
+              score = score / weight_sum;
+              if (score < 0 || score > pcc_computer.kMaxCost) {
+                score = pcc_computer.kMaxCost;
+              }
+              if (score < minScore) {
+                minScore = score;
+                minHypo = i;
+              }
+            }
+          }
+          
+          // update the current state
+          const float *best_normal = normals[minHypo];
+          float best_depth = depth_map.Get(row, col);
+          if(minHypo != 8){
+            best_depth = depth_map.Get(pt_index[2 * minHypo], pt_index[2 * minHypo + 1]);
+          }
+          depth_map.Set(row, col, best_depth);
+          normal_map.SetSlice(row, col, best_normal);
+          for (size_t image_idx = 0; image_idx < N; image_idx++) {
+            cost_map.Set(row, col, image_idx, M_map.Get(row, col, N * minHypo + image_idx));
+          }
+      }
+  }
+  
+  __syncthreads();
+}
+
+template<int kWindowSize, int kWindowStep>
+__global__ void RefineMent(GpuMat<float> cost_map,
+                      GpuMat<float> depth_map,
+                                      GpuMat<float> normal_map,
+                                      GpuMat<float> M_map,
+                                      GpuMat<int> last_important_view_map,
+                                      GpuMat<float> view_weight_map,
+                                      const GpuMat<float> ref_sum_image,
+                                         const GpuMat<float> ref_squared_sum_image,
+                                         GpuMat<curandState> rand_state_map,
+                      int iter,
+                      float sigma_spatial,
+                      float sigma_color,
+                      float depth_min,
+                      float depth_max) {
+
+    const int thread_Idx_x = threadIdx.x;
+    const int thread_Idx_y = threadIdx.y;
+
+    const int row = blockDim.y * blockIdx.y + threadIdx.y;
+    const int col = blockDim.x * blockIdx.x + threadIdx.x;
+    
+    //__shared__ float local_ref_image[9 * THREADS_PER_BLOCK * THREADS_PER_BLOCK];
+    __shared__ float local_ref_image[(THREADS_PER_BLOCK + 2 * (kWindowSize / 2)) * (THREADS_PER_BLOCK + 2 * (kWindowSize / 2))];
+
+    PhotoConsistencyCostComputer<kWindowSize, kWindowStep> pcc_computer(
+      sigma_spatial, sigma_color);
+    pcc_computer.local_ref_image = local_ref_image;
+    pcc_computer.row = row;
+    pcc_computer.col = col;
+
+    // Note that this must be executed even for pixels outside the borders,
+    // since pixels are used in the local neighborhood of the current pixel.
+    
+    //                                          
+    ACMMReadRefImageIntoSharedMemory<kWindowSize>(local_ref_image, row, col,thread_Idx_x, thread_Idx_y);
+
+  if (col < cost_map.GetWidth() && row < cost_map.GetHeight()) {	
+    //depth_map.Set(row, col, local_ref_image[(thread_Idx_y + kWindowRadius)* (THREADS_PER_BLOCK + 2 * kWindowRadius) + kWindowRadius + thread_Idx_x]);
+      pcc_computer.local_ref_sum = ref_sum_image.Get(row, col);
+      pcc_computer.local_ref_squared_sum = ref_squared_sum_image.Get(row, col);
+
+      float perturbation = 1.0f / pow(2.0f, iter);
+      curandState rand_state = rand_state_map.Get(row, col);
+
+      float cur_normal[3];
+      normal_map.GetSlice(row, col, cur_normal);
+
+      float rnd_normal[3];
+      float prb_normal[3];
+      
+      GenerateRandomNormal(row, col, &rand_state, rnd_normal);
+      PerturbNormal(row, col, perturbation * M_PI, cur_normal, &rand_state, prb_normal);
+
+      float cur_depth = depth_map.Get(row, col);
+      float rnd_depth;
+      float prb_depth;
+
+      rnd_depth = GenerateRandomDepth(depth_min, depth_max, &rand_state);
+      prb_depth = PerturbDepth(perturbation, cur_depth, &rand_state);
+          
+
+        //0: prb_norm,rnd_depth
+       //1: rnd_norm,rnd_depth
+       //2: cur_norm,rnd_depth
+       //3: prb_norm,prb_depth
+       //4: rnd_norm,prb_depth
+       //5: cur_norm,prb_depth
+       //6: prb_norm,cur_depth
+       //7: rnd_norm,cur_depth
+      //8: cur_norm,cur_depth	
+
+       const float hypo_depths[9] = {rnd_depth, rnd_depth, rnd_depth, prb_depth, prb_depth, prb_depth, cur_depth, cur_depth, cur_depth};
+      const float* normals[9] = {prb_normal, rnd_normal, cur_normal, prb_normal, rnd_normal, cur_normal, prb_normal, rnd_normal, cur_normal};
+    
+      size_t N = cost_map.GetDepth();
+      /*
+      * ii. Compute M Matrix
+      */
+      // float dis_cost = 0.0f;
+      // int index = 0;
+      // float M[256];
+      // float ViewWeight[32];
+      for (size_t i = 0; i < 9; i++) {
+        pcc_computer.normal = normals[i];
+        pcc_computer.depth = hypo_depths[i];
+        
+        for (size_t image_idx = 0; image_idx < N; image_idx++) {
+              pcc_computer.src_image_idx = image_idx;
+              float c = pcc_computer.ACMMCompute_shared(thread_Idx_x, thread_Idx_y);
+              M_map.Set(row, col, N * i + image_idx, c);
+            }
+      }
+
+      // for (int i = 0; i < 9; i++) {
+      // 	for (int image_idx = 0; image_idx < N; ++image_idx) {
+      // 		dis_cost += M_map.Get(row, col, N * i + image_idx);
+      // 	}
+      // }
+      // dis_cost = dis_cost/(9*N);
+      //printf("dis_cost:%f\n", dis_cost);
+      //depth_map.Set(row, col, dis_cost);
+
+      /*
+      * iii. Computer viewWeight
+      */
+      float init_good_threshold = 0.8f;
+      float bad_threshold = 1.2f;
+      int viewWeight_n1 = 2;
+      int viewWeight_n2 = 3;
+      float viewWeight_alpha = 90.0f;
+      float viewWeight_belta = 0.3f;
+
+      float good_threshold =init_good_threshold * exp(-iter * iter / viewWeight_alpha);
+      float maxWeight = 0.0f;
+      int lastImportant = -1;
+
+      for (size_t image_idx = 0; image_idx < N; image_idx++) {
+
+        float weight = 0.0f;
+        int S_good_size = 0;
+        float S_good_score = 0.0f;
+        int S_bad_size = 0;
+
+        for (size_t i = 0; i < 9; i++) {
+          float mij = M_map.Get(row, col, N * i + image_idx);
+          //formula (4)
+          if (mij < good_threshold) {
+            S_good_score += exp(-mij * mij / (2 * viewWeight_belta * viewWeight_belta));
+            
+            S_good_size += 1;
+          }
+          if (mij > bad_threshold) {
+            S_bad_size += 1;
+          }
+        }
+
+        int I = 1;
+        if (image_idx == last_important_view_map.Get(row, col)) {
+          I = 1;
+        }
+        else {
+          I = 0;
+        }
+        //printf("S_good_size %d\n", S_good_size);
+        //printf("S_bad_size %d\n", S_bad_size);
+        // //formula (5)
+        if (S_good_size > viewWeight_n1 && S_bad_size < viewWeight_n2) {
+          S_good_score = S_good_score / S_good_size;
+          weight = (I + 1) * S_good_score;
+        }
+        else {
+          weight = 0.2 * (I);
+        }
+    //printf("mij %f\n", weight);
+        if (weight > maxWeight) {
+          lastImportant = image_idx;
+          maxWeight = weight;
+        }
+        view_weight_map.Set(row, col, image_idx, weight);
+      }
+      last_important_view_map.Set(row, col, lastImportant);
+      
+      // dis_cost = 0;
+      // for (int image_idx = 0; image_idx < N; ++image_idx) {
+      // 	dis_cost += view_weight_map.Get(row, col, image_idx);
+      // }
+      
+      // dis_cost = dis_cost/(N);
+      // printf("dis %f\n", dis_cost);
+      // depth_map.Set(row, col, dis_cost);
+
+      float minScore = pcc_computer.kMaxCost;
+      int minHypo = 8;
+
+      for (int i = 0; i < 9; i++) {
+        float score = 0.0f;
+        float weight_sum = 0.0f;
+        
+        for (size_t image_idx = 0; image_idx < N; image_idx++) {
+          float mij = M_map.Get(row, col, N * i + image_idx);
+          float viewWeight = view_weight_map.Get(row, col, image_idx);
+          if (mij < pcc_computer.kMaxCost) {
+            score += mij * viewWeight;
+            weight_sum += viewWeight;
+          }
+        }
+        if (weight_sum != 0.0f) {
+          score = score / weight_sum;
+          if (score < 0 || score > pcc_computer.kMaxCost) {
+            score = pcc_computer.kMaxCost;
+          }
+
+          if (score < minScore) {
+            minScore = score;
+            minHypo = i;
+          }
+        }
+      }
+      //printf("minHypo %d\n", minHypo);
+      const float *best_normal = normals[minHypo];
+      float best_depth = hypo_depths[minHypo];
+      
+      depth_map.Set(row, col, best_depth);
+      normal_map.SetSlice(row, col, best_normal);
+      for (size_t image_idx = 0; image_idx < N; image_idx++) {
+        cost_map.Set(row, col, M_map.Get(row, col, N * minHypo + image_idx));
+      }
+      rand_state_map.Set(row, col, rand_state);
+  }
+  __syncthreads();
+}
+
+template <int kWindowSize, int kWindowStep>
+void PatchMatchCuda::ACMMRunWithWindowSizeAndStep() {
+  // Wait for all initializations to finish.
+    CUDA_SYNC_AND_CHECK();
+
+    CudaTimer total_timer;
+    CudaTimer init_timer;
+
+    ComputeCudaConfig();
+    // random init and compute cost
+    ACMMComputeInitialCost<kWindowSize, kWindowStep>
+      <<<elem_wise_grid_size_, elem_wise_block_size_>>>(
+          *cost_map_, *depth_map_, *normal_map_, *ref_image_->sum_image,
+          *ref_image_->squared_sum_image, options_.sigma_spatial,
+          options_.sigma_color);
+    CUDA_SYNC_AND_CHECK();
+
+    init_timer.Print("Initialization");
+
+    bool kGeomConsistencyTerm = false;
+    if(options_.){
+      kGeomConsistencyTerm = true;
+    }
+    for(int iter = 0; iter < options_.num_iterations; ++iter) {
+      CudaTimer iter_timer;
+      CUDA_SYNC_AND_CHECK();
+      ACMMCheckerBoard_cu<kWindowSize, kWindowStep, kGeomConsistencyTerm><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+          options_.sigma_color, options_.depth_min, options_.depth_max, true, options_.geom_consistency_regularizer);
+      CUDA_SYNC_AND_CHECK();
+      ACMMCheckerBoard_cu<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+          options_.sigma_color, options_.depth_min, options_.depth_max, false);
+      CUDA_SYNC_AND_CHECK();
+      RefineMent<kWindowSize, kWindowStep><<<elem_wise_grid_size_, elem_wise_block_size_>>>
+      ( *cost_map_, *depth_map_, *normal_map_, *M_map_, *last_important_view_map_, *sel_prob_map_, *ref_image_->sum_image, *ref_image_->squared_sum_image, *rand_state_map_, iter, options_.sigma_spatial,
+          options_.sigma_color, options_.depth_min, options_.depth_max);
+      CUDA_SYNC_AND_CHECK();
+      iter_timer.Print("Iteration " + std::to_string(iter + 1));
+    }
+
+    total_timer.Print("Total");
+}
+////////////////////////////////////////////////////////////////////////////////////////   ACMM END ///////////////////////////////////////////////////////////////////////////////////////////
+
 
 void PatchMatchCuda::ComputeCudaConfig() {
   sweep_block_size_.x = THREADS_PER_BLOCK;
@@ -1659,6 +2667,29 @@ void PatchMatchCuda::InitWorkspaceMemory() {
 
   cost_map_.reset(new GpuMat<float>(ref_width_, ref_height_,
                                     problem_.src_image_idxs.size()));
+
+  // ACMM
+  cost_map_->FillWithScalar(2.0f);
+
+  M_map_.reset(new GpuMat<float>(ref_width_, ref_height_,
+                                    9 * problem_.src_image_idxs.size()));
+
+  M_map_->FillWithScalar(2.0f);
+
+  last_important_view_map_.reset(new GpuMat<int>(ref_width_, ref_height_));
+
+  last_important_view_map_->FillWithScalar(-1);
+
+  view_weight_map_.reset(new GpuMat<float>(ref_width_, ref_height_,
+                                    problem_.src_image_idxs.size()));
+
+  // up down left right
+  V_step_.reset(new GpuMat<int>(ref_width_, ref_height_, 4)); 
+  V_step_->FillWithScalar(3);
+  S_step_.reset(new GpuMat<int>(ref_width_, ref_height_, 4));
+  S_step_->FillWithScalar(11);
+  
+  // ACMM END
 
   const int ref_max_dim = std::max(ref_width_, ref_height_);
   global_workspace_.reset(

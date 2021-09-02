@@ -67,6 +67,9 @@ class PatchMatchCuda {
   template <int kWindowSize, int kWindowStep>
   void RunWithWindowSizeAndStep();
 
+  template <int kWindowSize, int kWindowStep>
+  void ACMMRunWithWindowSizeAndStep();
+
   void ComputeCudaConfig();
 
   void InitRefImage();
@@ -96,8 +99,8 @@ class PatchMatchCuda {
   int rotation_in_half_pi_;
 
   // Reference and source image input data.
-  std::unique_ptr<CudaArrayWrapper<uint8_t>> ref_image_device_;
-  std::unique_ptr<CudaArrayWrapper<uint8_t>> src_images_device_;
+  std::unique_ptr<CudaArrayWrapper<int>> ref_image_device_;
+  std::unique_ptr<CudaArrayWrapper<int>> src_images_device_;
   std::unique_ptr<CudaArrayWrapper<float>> src_depth_maps_device_;
 
   // Relative poses from rotated versions of reference image to source images
@@ -130,6 +133,13 @@ class PatchMatchCuda {
   std::unique_ptr<GpuMat<float>> cost_map_;
   std::unique_ptr<GpuMatPRNG> rand_state_map_;
   std::unique_ptr<GpuMat<uint8_t>> consistency_mask_;
+
+  // ACMM Data
+  std::unique_ptr<GpuMat<float>> M_map_;
+  std::unique_ptr<GpuMat<int>> last_important_view_map_;
+  std::unique_ptr<GpuMat<float>> view_weight_map_;
+  std::unique_ptr<GpuMat<uint8_t>> V_step;
+  std::unique_ptr<GpuMat<uint8_t>> S_step;
 
   // Shared memory is too small to hold local state for each thread,
   // so this is workspace memory in global memory.

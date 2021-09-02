@@ -147,6 +147,8 @@ struct PatchMatchOptions {
   double ort_min_dis = 30;
   double ort_max_dis = 135;
 
+  // algo names
+  std::string pm_algo = "COLMAP";
 
   void Print() const;
   bool Check() const {
