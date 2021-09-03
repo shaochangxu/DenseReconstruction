@@ -1955,9 +1955,8 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
     
     ACMMReadRefImageIntoSharedMemory<kWindowSize>(local_ref_image, row, col, thread_Idx_x, thread_Idx_y);
     
-  
-    if( ((threadIdx.x % 2 == 0 && threadIdx.y % 2 == 0) || (threadIdx.x % 2 != 0 && threadIdx.y % 2 != 0))){ //||
-       // !isBlack && ((threadIdx.x % 2 != 0 && threadIdx.y % 2 == 0) || (threadIdx.x % 2 == 0 && threadIdx.y % 2 != 0))){
+    if( ((threadIdx.x % 2 == 0 && threadIdx.y % 2 == 0) || (threadIdx.x % 2 != 0 && threadIdx.y % 2 != 0)) ||
+        !isBlack && ((threadIdx.x % 2 != 0 && threadIdx.y % 2 == 0) || (threadIdx.x % 2 == 0 && threadIdx.y % 2 != 0))){
       // process black pixel
       if (col < cost_map.GetWidth() && row < cost_map.GetHeight()) {
           pcc_computer.local_ref_sum = ref_sum_image.Get(row, col);
@@ -1975,98 +1974,75 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
           int &v_down = V_step.GetRef(row, col, 1);
           int &v_left = V_step.GetRef(row, col, 2);
           int &v_right = V_step.GetRef(row, col, 3);
-	  //if (threadIdx.x == 0)  printf("debug:::::::::::::%d\n", v_left);
-	  // i. select the 8 hypo with min cost
+	  
+	        // i. select the 8 hypo with min cost
           CheckBoardSampler(cost_map.GetPtr(), cost_map.GetPitch(), row, col, cost_map.GetHeight(), cost_map.GetWidth(), cost_map.GetDepth(), 
                             v_up, v_down, v_left, v_right,
                             s_up, s_down, s_left, s_right,
                             minCost, pt_index);
-    	  /*
-          // v: up down left right; s: up down left right; 
-          int hit[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-    
+                    int hit[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
           //update the search area
           for(int i = 0; i < 8; i++){
             int pt_r = pt_index[2 * i];
             int pt_c = pt_index[2 * i + 1];
             // up S
             if(pt_r < row && pt_c == col) {
-              S_step.Set(row, col, 0, s_up + 1);
+              //S_step.Set(row, col, 0, s_up + 1);
+              s_up += 1;
               hit[4] = 1;
             }
             // down S
             else if(pt_r > row && pt_c == col) {
-              S_step.Set(row, col, 1, s_down + 1);
+              s_down += 1;
               hit[5] = 1;
             }
             // left S
             else if(pt_r == row && pt_c < col) {
-              S_step.Set(row, col, 2, s_left + 1);
+              s_left += 1;
               hit[6] = 1;
             }
             // right S
             else if(pt_r == row && pt_c > col) {
-              S_step.Set(row, col, 3, s_right + 1);
+              s_right += 1;
               hit[7] = 1;
             }
             // up v
             else if(pt_r < row && (pt_c - col == (row - 1) - pt_r || col - pt_c == (row - 1) - pt_r)) {
-              V_step.Set(row, col, 0, v_up + 1);
+              v_up += 1;
               hit[0] = 1;
             }
             // down V
             else if(pt_r > row && (pt_c - col == pt_r - (row + 1) || col - pt_c == pt_r - (row + 1))) {
-              V_step.Set(row, col, 1, v_down + 1);
+              v_down += 1;
               hit[1] = 1;
             }
             // left V
             else if(pt_c < col && (pt_r - row == (col - 1) - pt_c || row - pt_r == (col - 1) - pt_c)) {
-              //V_step.Set(row, col, 2, v_left + 1);
-              //printf("%d\n", V_step.Get(row, col, 2));
-	      hit[2] = 1;
+              v_left += 1;
+              hit[2] = 1;
             }
             // right V
             else if(pt_c > col && (pt_r - row == pt_c - (col + 1) || row - pt_r == pt_c - (col + 1))) {
-              //V_step.Set(row, col, 3, v_right + 1);
+              v_right += 1;
               hit[3] = 1;
             }
           }
-    
-          int minVStep = 3;	
-          int minSStep = 5; 
+
+          int minVStep = 3;
+          int minSStep = 5;
           for(size_t i = 0; i < 8; i++){
             if(hit[i] == 0){
-              if(i == 0) V_step.Set(row, col, 0,  max_cu(v_up - 1, minVStep));
-              else if(i == 1) V_step.Set(row, col, 1, max_cu(v_down - 1, minVStep));
-              else if(i == 2) V_step.Set(row, col, 2, max_cu(v_left - 1, minVStep));
-              else if(i == 3) V_step.Set(row, col, 3, max_cu(v_right - 1, minVStep));
-              else if(i == 4) S_step.Set(row, col, 0, max_cu(s_up - 1, minSStep));
-              else if(i == 5) S_step.Set(row, col, 1, max_cu(s_down - 1, minSStep));
-              else if(i == 6) S_step.Set(row, col, 2, max_cu(s_left - 1, minSStep));
-              else if(i == 7) S_step.Set(row, col, 3, max_cu(s_right - 1, minSStep));
+              if(i == 0) v_up -= 1;
+              else if(i == 1) v_down -= 1;
+              else if(i == 2) v_left -= 1;
+              else if(i == 3) v_right -= 1;
+              else if(i == 4) s_up -= 1;
+              else if(i == 5) s_down -= 1;
+              else if(i == 6) s_left -= 1;
+              else if(i == 7) s_right -= 1;
             }
           }
-  
-          // 9 hypo: 8 selected and the current
-          float normals_0[3];
-          float normals_1[3];
-          float normals_2[3];
-          float normals_3[3];
-          float normals_4[3];
-          float normals_5[3];
-          float normals_6[3];
-          float normals_7[3];
-          float normals_8[3];
-          normal_map.GetSlice(pt_index[2 * 0], pt_index[2 * 0 + 1], normals_0);
-          normal_map.GetSlice(pt_index[2 * 1], pt_index[2 * 1 + 1], normals_1);
-          normal_map.GetSlice(pt_index[2 * 2], pt_index[2 * 2 + 1], normals_2);
-          normal_map.GetSlice(pt_index[2 * 3], pt_index[2 * 3 + 1], normals_3);
-          normal_map.GetSlice(pt_index[2 * 4], pt_index[2 * 4 + 1], normals_4);
-          normal_map.GetSlice(pt_index[2 * 5], pt_index[2 * 5 + 1], normals_5);
-          normal_map.GetSlice(pt_index[2 * 6], pt_index[2 * 6 + 1], normals_6);
-          normal_map.GetSlice(pt_index[2 * 7], pt_index[2 * 7 + 1], normals_7);
-          normal_map.GetSlice(row, col, normals_8);	
-          const float* normals[9] = {normals_0, normals_1, normals_2, normals_3, normals_4, normals_5, normals_6, normals_7, normals_8};
           
           // N: neighbor view
           size_t N = cost_map.GetDepth();
@@ -2205,71 +2181,6 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
   }
   
   __syncthreads();
-          // v: up down left right; s: up down left right; 
-          int hit[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-
-          //update the search area
-          for(int i = 0; i < 8; i++){
-            int pt_r = pt_index[2 * i];
-            int pt_c = pt_index[2 * i + 1];
-            // up S
-            if(pt_r < row && pt_c == col) {
-              //S_step.Set(row, col, 0, s_up + 1);
-              
-		hit[4] = 1;
-            }
-            // down S
-            else if(pt_r > row && pt_c == col) {
-              S_step.Set(row, col, 1, s_down + 1);
-              hit[5] = 1;
-            }
-            // left S
-            else if(pt_r == row && pt_c < col) {
-              S_step.Set(row, col, 2, s_left + 1);
-              hit[6] = 1;
-            }
-            // right S
-            else if(pt_r == row && pt_c > col) {
-              S_step.Set(row, col, 3, s_right + 1);
-              hit[7] = 1;
-            }
-            // up v
-            else if(pt_r < row && (pt_c - col == (row - 1) - pt_r || col - pt_c == (row - 1) - pt_r)) {
-              V_step.Set(row, col, 0, v_up + 1);
-              hit[0] = 1;
-            }
-            // down V
-            else if(pt_r > row && (pt_c - col == pt_r - (row + 1) || col - pt_c == pt_r - (row + 1))) {
-              V_step.Set(row, col, 1, v_down + 1);
-              hit[1] = 1;
-            }
-            // left V
-            else if(pt_c < col && (pt_r - row == (col - 1) - pt_c || row - pt_r == (col - 1) - pt_c)) {
-              //V_step.Set(row, col, 2, v_left + 1);
-              //printf("%d\n", V_step.Get(row, col, 2));
-              hit[2] = 1;
-            }
-            // right V
-            else if(pt_c > col && (pt_r - row == pt_c - (col + 1) || row - pt_r == pt_c - (col + 1))) {
-              //V_step.Set(row, col, 3, v_right + 1);
-              hit[3] = 1;
-            }
-          }
-
-          int minVStep = 3;
-          int minSStep = 5;
-          for(size_t i = 0; i < 8; i++){
-            if(hit[i] == 0){
-              if(i == 0) V_step.Set(row, col, 0,  max_cu(v_up - 1, minVStep));
-              else if(i == 1) V_step.Set(row, col, 1, max_cu(v_down - 1, minVStep));
-              else if(i == 2) V_step.Set(row, col, 2, max_cu(v_left - 1, minVStep));
-              else if(i == 3) V_step.Set(row, col, 3, max_cu(v_right - 1, minVStep));
-              else if(i == 4) S_step.Set(row, col, 0, max_cu(s_up - 1, minSStep));
-              else if(i == 5) S_step.Set(row, col, 1, max_cu(s_down - 1, minSStep));
-              else if(i == 6) S_step.Set(row, col, 2, max_cu(s_left - 1, minSStep));
-              else if(i == 7) S_step.Set(row, col, 3, max_cu(s_right - 1, minSStep));
-            }
-          }
 }
 
 
