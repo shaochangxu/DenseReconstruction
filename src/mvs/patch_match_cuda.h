@@ -67,6 +67,9 @@ class PatchMatchCuda {
   template <int kWindowSize, int kWindowStep>
   void RunWithWindowSizeAndStep();
 
+  template <int kWindowSize, int kWindowStep>
+  void ACMMRunWithWindowSizeAndStep();
+
   void ComputeCudaConfig();
 
   void InitRefImage();
@@ -130,6 +133,13 @@ class PatchMatchCuda {
   std::unique_ptr<GpuMat<float>> cost_map_;
   std::unique_ptr<GpuMatPRNG> rand_state_map_;
   std::unique_ptr<GpuMat<uint8_t>> consistency_mask_;
+
+  // ACMM Data
+  std::unique_ptr<GpuMat<float>> M_map_;
+  std::unique_ptr<GpuMat<int>> last_important_view_map_;
+  std::unique_ptr<GpuMat<float>> view_weight_map_;
+  std::unique_ptr<GpuMat<int>> V_step_;
+  std::unique_ptr<GpuMat<int>> S_step_;
 
   // Shared memory is too small to hold local state for each thread,
   // so this is workspace memory in global memory.

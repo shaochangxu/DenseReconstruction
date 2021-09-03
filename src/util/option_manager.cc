@@ -657,6 +657,8 @@ void OptionManager::AddPatchMatchStereoOptions() {
                               &patch_match_stereo->ort_min_dis);
   AddAndRegisterDefaultOption("PatchMatchStereo.ort_max_dis",
                               &patch_match_stereo->ort_max_dis);
+  AddAndRegisterDefaultOption("PatchMatchStereo.algo",
+                              &patch_match_stereo->pm_algo);
 }
 
 void OptionManager::AddStereoFusionOptions() {
