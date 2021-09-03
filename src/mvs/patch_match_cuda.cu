@@ -1980,61 +1980,60 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
                             v_up, v_down, v_left, v_right,
                             s_up, s_down, s_left, s_right,
                             minCost, pt_index);
-	  
+    
           // v: up down left right; s: up down left right; 
           int hit[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-	  
+    
           //update the search area
           for(int i = 0; i < 8; i++){
             int pt_r = pt_index[2 * i];
             int pt_c = pt_index[2 * i + 1];
             // up S
             if(pt_r < row && pt_c == col) {
-              S_step.Set(row, col, 0, s_up + 1);
+              //S_step.Set(row, col, 0, s_up + 1);
               hit[4] = 1;
             }
             // down S
             else if(pt_r > row && pt_c == col) {
-              S_step.Set(row, col, 1, s_down + 1);
+              //S_step.Set(row, col, 1, s_down + 1);
               hit[5] = 1;
             }
             // left S
             else if(pt_r == row && pt_c < col) {
-              S_step.Set(row, col, 2, s_left + 1);
+              //S_step.Set(row, col, 2, s_left + 1);
               hit[6] = 1;
             }
             // right S
             else if(pt_r == row && pt_c > col) {
-              S_step.Set(row, col, 3, s_right + 1);
+              //S_step.Set(row, col, 3, s_right + 1);
               hit[7] = 1;
             }
             // up v
             else if(pt_r < row && (pt_c - col == (row - 1) - pt_r || col - pt_c == (row - 1) - pt_r)) {
-              V_step.Set(row, col, 0, v_up + 1);
+              //V_step.Set(row, col, 0, v_up + 1);
               hit[0] = 1;
             }
             // down V
             else if(pt_r > row && (pt_c - col == pt_r - (row + 1) || col - pt_c == pt_r - (row + 1))) {
-              V_step.Set(row, col, 1, v_down + 1);
+              //V_step.Set(row, col, 1, v_down + 1);
               hit[1] = 1;
             }
             // left V
             else if(pt_c < col && (pt_r - row == (col - 1) - pt_c || row - pt_r == (col - 1) - pt_c)) {
-              V_step.Set(row, col, 2, v_left + 1);
+              //V_step.Set(row, col, 2, v_left + 1);
               hit[2] = 1;
             }
             // right V
             else if(pt_c > col && (pt_r - row == pt_c - (col + 1) || row - pt_r == pt_c - (col + 1))) {
-              V_step.Set(row, col, 3, v_right + 1);
+              //V_step.Set(row, col, 3, v_right + 1);
               hit[3] = 1;
             }
           }
-	  
-	  int minVStep = 3;	
-	  int minSStep = 5;
-/*  
+    
+          int minVStep = 3;	
+          int minSStep = 5; 
           for(size_t i = 0; i < 8; i++){
-            if(!hit[i]){
+            if(hit[i] == 0){
               if(i == 0) V_step.Set(row, col, 0,  max_cu(v_up - 1, minVStep));
               else if(i == 1) V_step.Set(row, col, 1, max_cu(v_down - 1, minVStep));
               else if(i == 2) V_step.Set(row, col, 2, max_cu(v_left - 1, minVStep));
@@ -2045,19 +2044,7 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
               else if(i == 7) S_step.Set(row, col, 3, max_cu(s_right - 1, minSStep));
             }
           }
-  */
-          for(size_t i = 0; i < 8; i++){
-            if(hit[i] == 0){
-              if(i == 0) V_step.Set(row, col, 0, minVStep);
-              else if(i == 1) V_step.Set(row, col, 1, minVStep);
-              else if(i == 2) V_step.Set(row, col, 2, minVStep);
-              else if(i == 3) V_step.Set(row, col, 3, minVStep);
-              else if(i == 4) S_step.Set(row, col, 0, minSStep);
-              else if(i == 5) S_step.Set(row, col, 1,  minSStep);
-              else if(i == 6) S_step.Set(row, col, 2,  minSStep);
-              else if(i == 7) S_step.Set(row, col, 3,  minSStep);
-            }
-          }        
+  
           // 9 hypo: 8 selected and the current
           float normals_0[3];
           float normals_1[3];
