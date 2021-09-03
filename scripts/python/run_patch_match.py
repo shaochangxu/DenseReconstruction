@@ -2,8 +2,8 @@ import os
 import os.path
 
 build_path = "/home/hadoop/scx/buaa/build/src/exe/colmap "
-dense_dir = "/home/hadoop/scx/buaa/test_data/ws_scan9/dense/0/"
-ply_path = "/home/hadoop/scx/buaa/test_data/ws_scan9/dense/0/scan9_acmm.ply"
+dense_dir = "/home/hadoop/scx/buaa/test_data/ws_Zone14/dense/0/"
+ply_path = "/home/hadoop/scx/buaa/test_data/ws_Zone14/dense/0/Zone14_acmm.ply"
 
 os.system("rm  " + dense_dir + "/stereo/depth_maps/*")
 os.system("rm  " + dense_dir + "/stereo/normal_maps/*")

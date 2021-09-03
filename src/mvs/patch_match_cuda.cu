@@ -2032,14 +2032,14 @@ __global__ void ACMMCheckerBoard_cu(GpuMat<float> cost_map,
           int minSStep = 5;
           for(size_t i = 0; i < 8; i++){
             if(hit[i] == 0){
-              if(i == 0) v_up--;
-              else if(i == 1) v_down--;
-              else if(i == 2) v_left--;
-              else if(i == 3) v_right--;
-              else if(i == 4) s_up--;
-              else if(i == 5) s_down--;
-              else if(i == 6) v_left--;
-              else if(i == 7) v_right--;
+              if(i == 0 && v_up - 1 >= minVStep) v_up--;
+              else if(i == 1 && v_down - 1 >= minVStep) v_down--;
+              else if(i == 2 && v_left - 1 >= minVStep) v_left--;
+              else if(i == 3 && v_right - 1 >= minVStep) v_right--;
+              else if(i == 4 && s_up - 1 >= minSStep) s_up--;
+              else if(i == 5 && s_down - 1 >= minSStep) s_down--;
+              else if(i == 6 && s_left - 1 >= minSStep) v_left--;
+              else if(i == 7 && s_right - 1 >= minSStep) v_right--;
             }
           }
           
