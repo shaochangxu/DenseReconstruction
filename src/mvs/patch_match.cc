@@ -267,6 +267,8 @@ void PatchMatchController::ReadProblems() {
   std::cout << "Reading configuration..." << std::endl;
 
   problems_.clear();
+  ofstream pair_file;
+  std::stringstream pair_ss;
 
   const auto& model = workspace_->GetModel();
 
@@ -669,10 +671,20 @@ void PatchMatchController::ReadProblems() {
                  problem_config.ref_image_name.c_str())
           << std::endl;
     } else {
+      pair_ss << problem_config.ref_image_idx << std::endl;
+      pair_ss << problem.src_image_idxs.size();
+      for(auto src_idx: problem.src_image_idxs){
+        pair_ss << " " << src_idx << " " << 1.0f ;
+      }
+      pair_ss << std::endl;
       problems_.push_back(problem);
     }
   }
-
+  const std::string pair_file_path = JoinPaths(workspace_path_, workspace_->GetOptions().stereo_folder, "pair.txt");
+  pair_file.open(pair_file_path);
+  pair_file << problems_.size() << std::endl;
+  pair_file << pair_ss.str();
+  pair_file.close();
   std::cout << StringPrintf("Configuration has %d problems...",
                             problems_.size())
             << std::endl;
