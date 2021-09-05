@@ -671,7 +671,7 @@ void PatchMatchController::ReadProblems() {
                  problem_config.ref_image_name.c_str())
           << std::endl;
     } else {
-      pair_ss << problem_config.ref_image_idx << std::endl;
+      pair_ss << problem.ref_image_idx << std::endl;
       pair_ss << problem.src_image_idxs.size();
       for(auto src_idx: problem.src_image_idxs){
         pair_ss << " " << src_idx << " " << 1.0f ;

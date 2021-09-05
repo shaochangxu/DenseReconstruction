@@ -314,7 +314,7 @@ def img2semantic(semantic_img):
     dis = []
     for cate_color in semantic_index:
         y = np.array(cate_color * h * w).reshape(h, w, 3)
-        d = np.sum((y - semantic_img) * (y - semantic_img), axis=3)
+        d = np.sum((y - semantic_img) * (y - semantic_img), axis=2)
         dis.append(d)
 
     dis = np.array(dis) # N H W C

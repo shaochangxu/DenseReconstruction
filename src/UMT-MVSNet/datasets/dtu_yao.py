@@ -205,3 +205,21 @@ class MVSDataset(Dataset):
                     "mask": mask,
                     "depth_interval": depth_interval,
                 }
+if __name__ == '__main__':
+    from torch.utils.data import DataLoader
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--path', type=str, help='Project dir.')
+    args = parser.parse_args()
+
+    dataset = MVSDataset(args.path, listfile="../lists/dtu/train.txt", mode=train, nviews=7, have_depth=True)
+    
+    data_loader = DataLoader(dataset, 2, shuffle=True, num_workers=0, drop_last=True)
+    for batch_idx, sample in enumerate(data_loader):
+        print("depth_interval: {}".format(sample["depth_interval"]))
+        print("imgs shape:{}".format(sample["imgs"].shape))
+        print("proj_matrices shape:{}".format(sample["proj_matrices"].shape))
+        print("depth_values shape:{}".format(sample["depth_values"].shape))
+        print("depth shape:{}".format(sample["depth"].shape))
+        print("mask shape:{}".format(sample["mask"].shape))

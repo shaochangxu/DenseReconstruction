@@ -1,11 +1,15 @@
 from torch.utils.data import Dataset
+
 import numpy as np
 import os
-from PIL import Image
-from datasets.data_io import *
-
-from datasets.preprocess import *
+from preprocess import *
 from colmap2mvsnet import *
+
+from PIL import Image
+from data_io import *
+
+
+
 
 param_type = {
         'SIMPLE_PINHOLE': ['f', 'cx', 'cy'],
@@ -51,7 +55,7 @@ class MVSDataset(Dataset):
             self.image_dir = os.path.join(self.datapath, 'images')
             model_dir = os.path.join(self.datapath, 'sparse')
 
-            cameras, self.images, self.points3d = read_model(model_dir, '.txt')
+            cameras, self.images, self.points3d = read_model(model_dir, '.bin')
             
             # intrinsic
             self.intrinsic = {}
@@ -65,7 +69,7 @@ class MVSDataset(Dataset):
                     [0, params_dict['fy'], params_dict['cy']],
                     [0, 0, 1]
                 ])
-                self.intrinsic[camera_id] = i
+                self.intrinsic[camera_id - 1] = i
             
             # extrinsic
             self.extrinsic = {}
@@ -75,7 +79,7 @@ class MVSDataset(Dataset):
                 e[:3, :3] = qvec2rotmat(image.qvec)
                 e[:3, 3] = image.tvec
                 e[3, 3] = 1
-                self.extrinsic[image_id] = e
+                self.extrinsic[image_id - 1] = e
         else:
             self.with_colmap_depth_map = False
             self.with_semantic_map = True
@@ -137,7 +141,7 @@ class MVSDataset(Dataset):
         ref_view, src_views = meta
         # use only the reference view and first nviews-1 source views
         view_ids = [ref_view] + src_views[:self.nviews - 1]
-        # print(view_ids)
+        
         imgs = []
         depth_values = None
         cams=[]
@@ -216,7 +220,7 @@ class MVSDataset(Dataset):
         ref_view, src_views = meta
         # use only the reference view and first nviews-1 source views
         view_ids = [ref_view] + src_views[:self.nviews - 1]
-
+        print(view_ids)
         sample = {}
 
         zs = []
@@ -228,7 +232,7 @@ class MVSDataset(Dataset):
         for p3d_id in self.images[idx+1].point3D_ids:
             if p3d_id == -1:
                 continue
-            transformed = np.matmul(extrinsic[idx+1], [points3d[p3d_id].xyz[0], points3d[p3d_id].xyz[1], points3d[p3d_id].xyz[2], 1])
+            transformed = np.matmul(self.extrinsic[idx], [self.points3d[p3d_id].xyz[0], self.points3d[p3d_id].xyz[1], self.points3d[p3d_id].xyz[2], 1])
             zs.append(np.asscalar(transformed[2]))
         zs_sorted = sorted(zs)
         # relaxed depth range
@@ -247,13 +251,13 @@ class MVSDataset(Dataset):
             depth_end = depth_interval * self.ndepths + depth_min
 
         for vid in view_ids:
-            img_filename = os.path.join(self.image_dir, self.images[vid].name)
+            img_filename = os.path.join(self.image_dir, self.images[vid + 1].name)
             img = self.read_img(img_filename)
             imgs.append(img)
             extrinsics_list.append(self.extrinsic[vid])
             cams.append(self.intrinsic[vid])
-
-        imgs = np.stack(imgs).transpose([0, 3, 1, 2]) # N,C,H,W
+	
+        #imgs = np.stack(imgs).transpose([0, 3, 1, 2]) # N,C,H,W
        
         ##TO DO determine a proper scale to resize input
         resize_scale = 1
@@ -261,8 +265,8 @@ class MVSDataset(Dataset):
             h_scale = 0
             w_scale = 0       
             for view in range(self.nviews):
-                height_scale = float(self.max_h) / imgs[view].shape[1]
-                width_scale = float(self.max_w) / imgs[view].shape[2]
+                height_scale = float(self.max_h) / imgs[view].shape[0]
+                width_scale = float(self.max_w) / imgs[view].shape[1]
                 if height_scale > h_scale:
                     h_scale = height_scale
                 if width_scale > w_scale:
@@ -274,7 +278,7 @@ class MVSDataset(Dataset):
             if w_scale > h_scale:
                 resize_scale = w_scale
         
-        imgs = imgs.transpose(0,2,3,1) # N H W C
+        #imgs = imgs.transpose(0,2,3,1) # N H W C
         
         scaled_input_imgs, scaled_input_cams = scale_mvs_input(imgs, cams, scale=resize_scale, view_num=self.nviews)
         #TO DO crop to fit network
@@ -282,7 +286,7 @@ class MVSDataset(Dataset):
                     max_h=self.max_h,max_w=self.max_w,base_image_size=self.base_image_size)
                     
         croped_imgs = croped_imgs.transpose(0,3,1,2) # N C H W
-
+	
         new_proj_matrices = []
         for id in range(self.nviews):
             proj_mat = extrinsics_list[id]#.copy()
@@ -300,7 +304,7 @@ class MVSDataset(Dataset):
         if self.with_colmap_depth_map:
             depth_maps = []
             for vid in view_ids:
-                depth_filename = os.path.join(self.datapath, 'stereo', 'depth_maps', '{}.photometric.bin'.format(self.images[vid].name))
+                depth_filename = os.path.join(self.datapath, 'stereo', 'depth_maps', '{}.photometric.bin'.format(self.images[vid + 1].name))
                 depth_image = read_colmap_depth_or_normal(depth_filename)
                 depth_image = scale_image(depth_image, scale=resize_scale, interpolation='nearest')
                 h, w = depth_image.shape[0:2]
@@ -322,12 +326,12 @@ class MVSDataset(Dataset):
                 depth_image = depth_image[start_h:finish_h, start_w:finish_w]
                 depth_maps.append(depth_image)
 
-            sample["colmap_depth_maps"] = depth_maps
+            sample["colmap_depth_maps"] = np.array(depth_maps)
 
         if self.with_semantic_map:
             semantic_maps = []
             for vid in view_ids:
-                semantic_filename = os.path.join(self.datapath, 'semantic', format(self.images[vid].name))
+                semantic_filename = os.path.join(self.datapath, 'semantic', format(self.images[vid + 1].name))
                 semantic_image = self.read_img(semantic_filename)
                 semantic_image = scale_image(semantic_image, scale=resize_scale)
                 h, w = semantic_image.shape[0:2]
@@ -350,7 +354,7 @@ class MVSDataset(Dataset):
                 semantic_image = img2semantic(semantic_image)
                 semantic_maps.append(semantic_image)
 
-            sample["semantic_maps"] = semantic_maps
+            sample["semantic_maps"] = np.array(semantic_maps)
 
         return sample
 
@@ -369,7 +373,13 @@ if __name__ == '__main__':
     parser.add_argument('--path', type=str, help='Project dir.')
     args = parser.parse_args()
 
-    dataset = MVSDataset(args.path)
-    data_loader = DataLoader(dataset, 2, shuffle=True, num_workers=12, drop_last=True)
+    dataset = MVSDataset(args.path, max_h=128, max_w=128, with_colmap_depth_map=True, with_semantic_map=True)
+    
+    data_loader = DataLoader(dataset, 2, shuffle=True, num_workers=0, drop_last=True)
     for batch_idx, sample in enumerate(data_loader):
-        print(sample)
+        print("filename: {}".format(sample["filename"]))
+        print("imgs shape:{}".format(sample["imgs"].shape))
+        print("proj_matrices shape:{}".format(sample["proj_matrices"].shape))
+        print("depth_values shape:{}".format(sample["depth_values"].shape))
+        print("colmap_depth_maps shape:{}".format(sample["colmap_depth_maps"].shape))
+        print("semantic_maps shape:{}".format(sample["semantic_maps"].shape))
