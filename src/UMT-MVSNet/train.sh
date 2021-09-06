@@ -1,6 +1,6 @@
 #!/bin/bash
 data=$(date +"%m%d")
-n=4
+n=1
 batch=8
 epochs=2
 d=8
@@ -18,24 +18,27 @@ now=$(date +"%Y%m%d_%H%M%S")
 echo $name
 echo $now
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 /home/hadoop/scx/mvsnet/anaconda3/envs/drmvsnet/bin/python -m torch.distributed.launch --nproc_per_node=$n --master_port 10190 train.py  \
-        --dataset=dtu_yao \
-        --batch_size=${batch} \
-        --trainpath="/home/hadoop/scx/mvsnet/trainingdata/dtu_training" \
+data_set = "dtu_yao"
+train_path = "/home/hadoop/scx/buaa/dtu_training"
+list_file = "./lists/dtu/train.txt"
+
+CUDA_VISIBLE_DEVICES=0 python3 -m torch.distributed.launch --nproc_per_node=$n --master_port 10190 train.py  \
+        --model_version=V1 \
         --loss=${loss} \
-        --lr=${lr} \
-        --epochs=${epochs} \
+        --dataset=$data_set \
+        --trainpath=${train_path} \
+        --trainlist=${list_file} \
+        --ngpu=$n \
+        --lr=$lr \
+        --epochs=$epochs \
+        --batch_size=$batch \
         --loss_w=$loss_w \
+        --using_apex \
         --lr_scheduler=$lr_scheduler \
         --optimizer=$optimizer \
         --view_num=$view_num \
         --image_scale=$image_scale \
-        --using_apex \
         --reg_loss=True \
-        --ngpu=${n} \
-        --trainlist=lists/dtu/train.txt \
-        --vallist=lists/dtu/val.txt \
-        --testlist=lists/dtu/test.txt \
         --numdepth=$d \
         --interval_scale=$interval_scale \
         --logdir=./logdir/${name} \

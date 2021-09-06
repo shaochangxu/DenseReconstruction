@@ -2,8 +2,8 @@ from torch.utils.data import Dataset
 import numpy as np
 import os
 from PIL import Image
-from datasets.data_io import *
-from datasets.preprocess import *
+from data_io import *
+from preprocess import *
 
 # the DTU dataset preprocessed by Yao Yao (only for training)
 class MVSDataset(Dataset):
@@ -176,7 +176,7 @@ if __name__ == '__main__':
     parser.add_argument('--path', type=str, help='Project dir.')
     args = parser.parse_args()
 
-    dataset = MVSDataset(args.path, listfile="../lists/blend_train.txt", mode=train, nviews=7, have_depth=True)
+    dataset = MVSDataset(args.path, listfile="../lists/blend_train.txt", mode="train", nviews=7, have_depth=True)
     
     data_loader = DataLoader(dataset, 2, shuffle=True, num_workers=0, drop_last=True)
     for batch_idx, sample in enumerate(data_loader):

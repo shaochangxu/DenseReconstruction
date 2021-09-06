@@ -27,12 +27,9 @@ from third_party.radam import RAdam
 cudnn.benchmark = True
 #torch.backends.cudnn.enabled = False
 
-parser = argparse.ArgumentParser(description='A Official PyTorch Codebase of PVA-MVSNet')
-parser.add_argument('--mode', default='train', help='train, val or test', choices=['train', 'test', 'val', 'evaluate', 'profile'])
-parser.add_argument('--device', default='cuda', help='select model')
-
-parser.add_argument('--loss', default='mvsnet_loss', help='select loss', choices=['mvsnet_loss', 'mvsnet_loss_l1norm', 
-                            'mvsnet_loss_divby_interval', 'mvsnet_cls_loss', 'mvsnet_cls_loss_ori', 'unsup_loss'])
+parser = argparse.ArgumentParser(description='A Official PyTorch Codebase of UMT-MVSNet')
+parser.add_argument('--model_version', default='V1', help='select loss', choices=['V1',  'V2', 'V3'])
+parser.add_argument('--loss', default='mvsnet_loss', help='select loss', choices=['mvsnet_loss',  'mvsnet_cls_loss', 'unsup_loss'])
 
 parser.add_argument('--refine', help='True or False flag, input should be either "True" or "False".',
     type=ast.literal_eval, default=False)
@@ -50,7 +47,7 @@ parser.add_argument('--sync_bn', action='store_true',help='enabling apex sync BN
 parser.add_argument('--reg_loss', help='True or False flag, input should be either "True" or "False".',
     type=ast.literal_eval, default=False)
 parser.add_argument('--max_h', type=int, default=512, help='Maximum image height when training')
-parser.add_argument('--max_w', type=int, default=640, help='Maximum image width when training.')
+parser.add_argument('--max_w', type=int, default=512, help='Maximum image width when training.')
 ##### end dsrmvsnet
 
 parser.add_argument('--local_rank', type=int, default=0, help='training view num setting')
@@ -59,14 +56,11 @@ parser.add_argument('--view_num', type=int, default=3, help='training view num s
 
 parser.add_argument('--image_scale', type=float, default=0.25, help='pred depth map scale') # 0.5
 
-parser.add_argument('--ngpu', type=int, default=4, help='gpu size')
+parser.add_argument('--ngpu', type=int, default=1, help='gpu size')
 
 parser.add_argument('--dataset', default='dtu_yao', help='select dataset')
 parser.add_argument('--trainpath', help='train datapath')
-parser.add_argument('--testpath', help='test datapath')
 parser.add_argument('--trainlist', help='train list')
-parser.add_argument('--vallist', help='val list')
-parser.add_argument('--testlist', help='test list')
 
 parser.add_argument('--epochs', type=int, default=16, help='number of epochs to train')
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate')
@@ -89,12 +83,10 @@ parser.add_argument('--save_dir', default=None, help='the directory to save chec
 
 # parse arguments and check
 args = parser.parse_args()
-
-if args.testpath is None:
-    args.testpath = args.trainpath
+testpath = args.trainpath
 
 set_random_seed(1)
-device = torch.device(args.device)
+device = torch.device('cuda')
 
 #using sync_bn by using nvidia-apex, need to install apex. 半精度运算库
 if args.sync_bn:
@@ -120,27 +112,28 @@ if is_distributed:
 
 if (not is_distributed) or (dist.get_rank() == 0):
     # create logger for mode "train" and "testall"
-    if args.mode == "train":
-        if not os.path.isdir(args.logdir):
-            os.makedirs(args.logdir)
+    if not os.path.isdir(args.logdir):
+        os.makedirs(args.logdir)
 
-        current_time_str = str(datetime.datetime.now().strftime('%Y%m%d_%H%M%S'))
-        print("current time", current_time_str)
+    current_time_str = str(datetime.datetime.now().strftime('%Y%m%d_%H%M%S'))
+    print("current time", current_time_str)
 
-        print("creating new summary file")
-        logger = SummaryWriter(args.logdir)
+    print("creating new summary file")
+    logger = SummaryWriter(args.logdir)
 
     print("argv:", sys.argv[1:])
     print_args(args)
 
 # model, optimizer
-model = DrMVSNet(refine=args.refine, dp_ratio=args.dp_ratio, image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, reg_loss=args.reg_loss)
+if args.model_verison == "V1":
+    model = DrMVSNet(refine=args.refine, dp_ratio=args.dp_ratio, image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, reg_loss=args.reg_loss)
 
 model.to(device)
 print('Number of model parameters: {}'.format(sum([p.data.nelement() for p in model.parameters()])))
 print('Model define:')
 print(model)
 print('**********************\n')
+
 if args.sync_bn:
     import apex
     print("using apex synced BN")
@@ -189,13 +182,46 @@ else:
         model = nn.DataParallel(model)
 
 # dataset, dataloader
-# args.origin_size only load origin size depth, not modify Camera.txt
 MVSDataset = find_dataset_def(args.dataset)
-train_dataset = MVSDataset(args.trainpath, args.trainlist, "train", args.view_num, args.numdepth, args.interval_scale, args.inverse_depth, -1, args.image_scale, have_depth=(args.loss != 'unsup_loss')) # Training with False, Test with inverse_depth
+train_dataset = MVSDataset(
+    datapath = args.trainpath, 
+    listfile = args.trainlist, 
+    mode = "train", 
+    nviews = args.view_num, 
+    ndepths = args.numdepth, 
+    interval_scale = args.interval_scale, 
+    inverse_depth = args.inverse_depth, 
+    light_idx = -1, 
+    image_scale = args.image_scale, 
+    have_depth=(args.loss != 'unsup_loss')) # Training with False, Test with inverse_depth
 
-val_dataset = MVSDataset(args.trainpath, args.vallist, "val", 5, args.numdepth, args.interval_scale, args.inverse_depth, 3, args.image_scale, reverse=False, both=False) #view_num = 5, light_idx = 3
-test_dataset = MVSDataset(args.testpath, args.testlist, "test", 5, args.numdepth, 1.06, args.inverse_depth, 3, args.image_scale, reverse=False, both=False)
-reverse_test_dataset = MVSDataset(args.testpath, args.testlist, "test", 5, args.numdepth, 1.06, args.inverse_depth, 3, args.image_scale, reverse=True, both=False)
+test_dataset = MVSDataset(
+    datapath = args.testpath, 
+    listfile = args.testlist, 
+    mode = "infer", 
+    nviews = 5, 
+    ndepths = args.numdepth, 
+    interval_scale = 1.06, 
+    inverse_depth = args.inverse_depth, 
+    light_idx = 3, 
+    image_scale = args.image_scale, 
+    reverse=False, 
+    both=False
+)
+
+reverse_test_dataset = MVSDataset(
+    datapath = args.testpath, 
+    listfile = args.testlist, 
+    mode = "infer", 
+    nviews = 5, 
+    ndepths = args.numdepth, 
+    interval_scale = 1.06, 
+    inverse_depth = args.inverse_depth, 
+    light_idx = 3, 
+    image_scale = args.image_scale, 
+    reverse=True, 
+    both=False
+)
 
 if is_distributed:
     train_sampler = torch.utils.data.DistributedSampler(train_dataset, num_replicas=dist.get_world_size(),
@@ -204,17 +230,16 @@ if is_distributed:
                                                         rank=dist.get_rank())
     TrainImgLoader = DataLoader(train_dataset, args.batch_size, sampler=train_sampler, num_workers=8,
                                     drop_last=True,
-                                    pin_memory=True)
+                                    pin_memory=True)    
+
     TestImgLoader = DataLoader(test_dataset, args.batch_size, sampler=test_sampler, num_workers=4, drop_last=False,
                                     pin_memory=True)  
     ResTestImgLoader = DataLoader(reverse_test_dataset, args.batch_size, sampler=test_sampler, num_workers=4, drop_last=False,
-                                    pin_memory=True)                                                       
+                                    pin_memory=True)                                               
 else:
     TrainImgLoader = DataLoader(train_dataset, args.batch_size, shuffle=True, num_workers=12, drop_last=True)
-    ValImgLoader = DataLoader(val_dataset, args.batch_size, shuffle=False, num_workers=4, drop_last=False)
     TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=4, drop_last=False)
     ResTestImgLoader = DataLoader(reverse_test_dataset, args.batch_size, shuffle=False, num_workers=4, drop_last=False)
-
 
 # main function
 def train():
@@ -238,9 +263,8 @@ def train():
         lr_gamma = 1 / float(args.lrepochs.split(':')[1])
         lr_scheduler = WarmupMultiStepLR(optimizer, milestones, gamma=lr_gamma, warmup_factor=1.0/3, warmup_iters=500,
                                                             last_epoch=len(TrainImgLoader) * start_epoch - 1)
-    
+    # start epoch
     for epoch_idx in range(start_epoch, args.epochs):
-        
         print('Epoch {}/{}:'.format(epoch_idx, args.epochs))
 
         lr_scheduler.step()
@@ -252,7 +276,7 @@ def train():
             global_step = len(TrainImgLoader) * epoch_idx + batch_idx
             do_summary = global_step % 20 == 0
 
-            loss, scalar_outputs, image_outputs = train_sample(sample, detailed_summary=do_summary)
+            loss, scalar_outputs, image_outputs = train_sample(sample)
 
             for param_group in optimizer.param_groups:
                 lr = param_group['lr']
@@ -267,7 +291,6 @@ def train():
                     'Epoch {}/{}, Iter {}/{}, LR {}, train loss = {:.3f}, time = {:.3f}'.format(epoch_idx, args.epochs, batch_idx,
                                                                                         len(TrainImgLoader), lr, loss,
                                                                                         time.time() - start_time))
-
         # checkpoint
         if (not is_distributed) or (dist.get_rank() == 0):
             if (epoch_idx + 1) % 1 == 0:
@@ -277,6 +300,7 @@ def train():
                     'optimizer': optimizer.state_dict()},
                     "{}/model_{:0>6}.ckpt".format(args.save_dir, epoch_idx),
                     _use_new_zipfile_serialization=False)
+        
         gc.collect()
 
         # on test dataset
@@ -286,7 +310,7 @@ def train():
             global_step = len(TestImgLoader) * epoch_idx + batch_idx
             do_summary = global_step % 20 == 0
 
-            loss, scalar_outputs, image_outputs = test_sample(sample, detailed_summary=do_summary)
+            loss, scalar_outputs, image_outputs = test_sample(sample)
  
             if loss == 0:
                 print('Loss is zero, no valid point')
@@ -336,56 +360,13 @@ def train():
             save_scalars(logger, 'fulltest_reverse', avg_test_scalars.mean(), global_step)
             print("avg_test_scalars_reverse:", avg_test_scalars.mean())
         gc.collect()
-        
 
-def forward_hook(module, input, output):
-        print(module)
-        print('input', input)
-        print('output', output)
-
-
-def val():
-    global save_dir
-    print('Phase: test \n')
-
-
-    avg_test_scalars = DictAverageMeter()
-    if args.mode == 'test':
-        ImgLoader = TestImgLoader
-    elif args.mode == 'val':
-        ImgLoader = ValImgLoader
-        
-    avg_test_scalars = DictAverageMeter()
-    for batch_idx, sample in enumerate(ImgLoader):
-        start_time = time.time()
-        
-        loss, scalar_outputs, image_outputs = test_sample(sample, detailed_summary=True)
-       
-        if loss == 0:
-            print('Loss is zero, no valid point')
-            continue
-
-        avg_test_scalars.update(scalar_outputs)
-
-        if (not is_distributed) or (dist.get_rank() == 0):      
-            print('Iter {}/{}, val loss = {:.3f}, time = {:3f}'.format(batch_idx, len(ImgLoader), loss,
-                                                                    time.time() - start_time))
-            del scalar_outputs, image_outputs
-
-            if batch_idx % 100 == 0:
-                print("Iter {}/{}, val results = {}".format(batch_idx, len(ImgLoader), avg_test_scalars.mean()))
-
-    if (not is_distributed) or (dist.get_rank() == 0):
-        print("avg_{}_scalars:".format(args.mode), avg_test_scalars.mean())
-
-def train_sample(sample, detailed_summary=False, refine=False):
+def train_sample(sample):
     model.train()
     optimizer.zero_grad()
 
     sample_cuda = tocuda(sample)
     mask = sample_cuda["mask"]
-    depth_interval = sample_cuda["depth_interval"]
-    depth_value = sample_cuda["depth_values"]
     outputs = model(sample_cuda["imgs"], sample_cuda["proj_matrices"], sample_cuda["depth_values"])
 
     if args.loss == 'unsup_loss':
@@ -404,8 +385,6 @@ def train_sample(sample, detailed_summary=False, refine=False):
     else:
         loss.backward()
 
-    # gradient clip
-    #torch.nn.utils.clip_grad_norm(model.parameters(), 2.0)
     optimizer.step()
     scalar_outputs = {"loss": loss}
     image_outputs = {"depth_est": depth_est * mask,  
@@ -424,11 +403,8 @@ def test_sample(sample, detailed_summary=True, refine=False):
     sample_cuda = tocuda(sample)
     
     mask = sample_cuda["mask"]
-    depth_interval = sample_cuda["depth_interval"]
-    depth_value = sample_cuda["depth_values"]
     outputs = model(sample_cuda["imgs"], sample_cuda["proj_matrices"], sample_cuda["depth_values"])
-    #print(depth_value.type(), depth_interval.type(), depth_gt.type())
-    
+
     if args.loss == 'unsup_loss':
         depth_est = outputs["depth"]
         semantic_mask = outputs["semantic_mask"]
@@ -451,9 +427,5 @@ def test_sample(sample, detailed_summary=True, refine=False):
 
     return tensor2float(scalar_outputs["loss"]), tensor2float(scalar_outputs), tensor2numpy(image_outputs)
 
-
 if __name__ == '__main__':
-    if args.mode == "train":
-        train()
-    elif args.mode == "test" or args.mode == "val":
-        val()
+    train()
