@@ -8,9 +8,6 @@ from colmap2mvsnet import *
 from PIL import Image
 from data_io import *
 
-
-
-
 param_type = {
         'SIMPLE_PINHOLE': ['f', 'cx', 'cy'],
         'PINHOLE': ['fx', 'fy', 'cx', 'cy'],
@@ -218,6 +215,7 @@ class MVSDataset(Dataset):
     def getitem_Colmap(self, idx):
         meta = self.metas[idx]
         ref_view, src_views = meta
+        ref_image_filename = self.images[ref_view + 1].name
         # use only the reference view and first nviews-1 source views
         view_ids = [ref_view] + src_views[:self.nviews - 1]
         print(view_ids)
@@ -299,13 +297,13 @@ class MVSDataset(Dataset):
         sample["imgs"] = croped_imgs
         sample["proj_matrices"] = new_proj_matrices
         sample["depth_values"] = depth_values
-        sample["filename"] = '{:0>8}'.format(view_ids[0])
+        sample["filename"] = (ref_image_filename)
 
         if self.with_colmap_depth_map:
             depth_maps = []
             for vid in view_ids:
                 depth_filename = os.path.join(self.datapath, 'stereo', 'depth_maps', '{}.photometric.bin'.format(self.images[vid + 1].name))
-                depth_image = read_colmap_depth_or_normal(depth_filename)
+                depth_image = read_array(depth_filename)
                 depth_image = scale_image(depth_image, scale=resize_scale, interpolation='nearest')
                 h, w = depth_image.shape[0:2]
                 new_h = h

@@ -1,5 +1,6 @@
 import argparse
 import os
+from scripts.python.read_write_dense import write_array
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -26,11 +27,12 @@ cudnn.benchmark = True
 
 parser = argparse.ArgumentParser(description='Predict depth, filter, and fuse. May be different from the original implementation')
 
+parser.add_argument('--model_version', default='V1', help='select loss', choices=['V1',  'V2', 'V3'])
 parser.add_argument('--max_h', type=int, default=512, help='Maximum image height when training')
-parser.add_argument('--max_w', type=int, default=960, help='Maximum image width when training.')
+parser.add_argument('--max_w', type=int, default=512, help='Maximum image width when training.')
 parser.add_argument('--image_scale', type=float, default=1.0, help='pred depth map scale') # 0.5
 
-parser.add_argument('--dataset', default='data_eval_transform', help='select dataset')
+parser.add_argument('--dataset', default='data_infer', help='select dataset')
 parser.add_argument('--testpath', help='testing data path')
 parser.add_argument('--testlist', help='testing scan list')
 
@@ -53,18 +55,6 @@ if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
 # read intrinsics and extrinsics
-# def read_camera_parameters(filename):
-#     with open(filename) as f:
-#         lines = f.readlines()
-#         lines = [line.rstrip() for line in lines]
-#     # extrinsics: line [1,5), 4x4 matrix
-#     extrinsics = np.fromstring(' '.join(lines[1:5]), dtype=np.float32, sep=' ').reshape((4, 4))
-#     # intrinsics: line [7-10), 3x3 matrix
-#     intrinsics = np.fromstring(' '.join(lines[7:10]), dtype=np.float32, sep=' ').reshape((3, 3))
-#     # TODO: assume the feature is 1/4 of the original image size
-#     intrinsics[:2, :] /= 4
-#     return intrinsics, extrinsics
-
 def read_camera_parameters(filename,scale,index,flag):
     with open(filename) as f:
         lines = f.readlines()
@@ -83,6 +73,7 @@ def read_camera_parameters(filename,scale,index,flag):
         intrinsics[1,2]-=index
   
     return intrinsics, extrinsics
+
 # read an image
 def read_img(filename):
     img = Image.open(filename)
@@ -123,19 +114,18 @@ def read_score_file(filename):
             scores = [float(x) for x in f.readline().rstrip().split()[2::2]]
             data.append(scores)
     return data
+
 # run MVS model to save depth maps and confidence maps
 def save_depth():
     # dataset, dataloader
     MVSDataset = find_dataset_def(args.dataset)
-    test_dataset = MVSDataset(args.testpath, args.testlist, "test", 7, args.numdepth, args.interval_scale, False, 
-                    adaptive_scaling=True, max_h=args.max_h, max_w=args.max_w, sample_scale=1, base_image_size=8)
-    
+    test_dataset = MVSDataset(args.testpath, ndepths=args.numdepth, interval_scale=args.interval_scale, max_h=args.max_h, max_w=args.max_w, with_colmap_depth_map=False, with_semantic_map=False)
     TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=0, drop_last=False)
 
     # model
-    print('use Dense Multi-scale MVSNet')
-        
-    model = DrMVSNet(image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, predict = True, return_depth = True)
+    print('use UMT MVSNet_{}'.format(args.model_version))
+    if args.model_version == "V1":
+        model = DrMVSNet(image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, predict = True, return_depth = True)
 
     # load checkpoint file specified by args.loadckpt
     print("loading model {}".format(args.loadckpt))
@@ -166,7 +156,6 @@ def save_depth():
                 print('avg time:', total_time / 50) 
                 total_time = 0
                 
-
             outputs = tensor2numpy(outputs)
             print(outputs["depth"].shape)
             del sample_cuda
@@ -176,14 +165,14 @@ def save_depth():
             # save depth maps and confidence maps
             for filename, depth_est, photometric_confidence in zip(filenames, outputs["depth"],
                                                                    outputs["photometric_confidence"]):
-                depth_filename = os.path.join(save_dir, filename.format('depth_est_{}'.format(args.pyramid), '.pfm'))
-                confidence_filename = os.path.join(save_dir, filename.format('confidence_{}'.format(args.pyramid), '.pfm'))
+                depth_filename = os.path.join(save_dir, '{}.photometric.bin'.format(filename))
+                #confidence_filename = os.path.join(save_dir, '{}.photometric.bin'.format(filename))
                 os.makedirs(depth_filename.rsplit('/', 1)[0], exist_ok=True)
-                os.makedirs(confidence_filename.rsplit('/', 1)[0], exist_ok=True)
+                #os.makedirs(confidence_filename.rsplit('/', 1)[0], exist_ok=True)
                 # save depth maps
-                save_pfm(depth_filename, depth_est.squeeze())
+                write_array(depth_est.squeeze(), depth_filename)
                 # save confidence maps
-                save_pfm(confidence_filename, photometric_confidence.squeeze())
+                #save_pfm(confidence_filename, photometric_confidence.squeeze())
 
 
 # project the reference point cloud into the source view, then project back
@@ -254,15 +243,13 @@ def check_geometric_consistency(depth_ref, intrinsics_ref, extrinsics_ref, depth
 
 def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
     # the pair file
-    pair_file = os.path.join(scan_folder, "pair.txt")
+    pair_file = os.path.join(scan_folder, "stereo", "pair.txt")
     # for the final point cloud
     vertexs = []
     vertex_colors = []
 
     pair_data = read_pair_file(pair_file)
-    score_data = read_score_file(pair_file)
 
-    nviews = len(pair_data)
     # TODO: hardcode size
     # used_mask = [np.zeros([296, 400], dtype=np.bool) for _ in range(nviews)]
 
@@ -272,7 +259,6 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
     for ref_view, src_views in pair_data:
 
         ct2 += 1
-
 
         # load the reference image
         ref_img = read_img(os.path.join(scan_folder, 'images/{:0>8}.jpg'.format(ref_view)))
@@ -432,14 +418,7 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
 if __name__ == '__main__':
     # step1. save all the depth maps and the masks in outputs directory
     save_depth()
-
-    with open(args.testlist) as f:
-        scans = f.readlines()
-        scans = [line.rstrip() for line in scans]
-
+    # step2. filter saved depth maps with photometric confidence maps and geometric constraints
     photo_threshold = 0.015
-    for scan in scans:
-        scan_folder = os.path.join(args.testpath, scan)
-        out_folder = os.path.join(save_dir, scan)
-        # step2. filter saved depth maps with photometric confidence maps and geometric constraints
-        filter_depth(scan_folder, out_folder, os.path.join(args.outdir, scan + '.ply'), photo_threshold)
+    #filter_depth(args.testpath, args.outdir, os.path.join(args.outdir,  'mvsnet.ply'), photo_threshold)
+    
