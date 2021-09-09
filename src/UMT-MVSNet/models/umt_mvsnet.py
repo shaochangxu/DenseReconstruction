@@ -11,24 +11,18 @@ from .submodule import volumegatelight, volumegatelightgn
 # Recurrent Multi-scale Module
 from .rnnmodule import *
 
-class DrMVSNet(nn.Module):
-    def __init__(self, refine=True, dp_ratio=0.0, image_scale=0.25, max_h=960, max_w=480,
-                 reg_loss=False, return_depth=False, gn=True, pyramid=-1, predict=False):
-        super(DrMVSNet, self).__init__() # parent init
+class UMT_MVSNet_V1(nn.Module):
+    def __init__(self, image_scale=0.25, max_h=512, max_w=512,
+                 reg_loss=False, return_depth=False, gn=True,  predict=False):
+        super(UMT_MVSNet_V1, self).__init__() # parent init
         
         self.gn = gn
         self.feature = FeatNet(gn=self.gn)
 
-        ## 4 LSTM layers
-        if pyramid == -1:
-            input_size = (int(max_h*image_scale), int(max_w*image_scale)) #height, width
-        elif pyramid == 0:
-            input_size = (296, 400)
-        elif pyramid == 1:
-            input_size = (144, 200)
-        elif pyramid == 2:
-            input_size = (72, 96)   
+        input_size = (int(max_h*image_scale), int(max_w*image_scale)) #height, width
+
         #print('input UNetConvLSTM H,W: {}, {}'.format(input_size[0], input_size[1]))
+        
         input_dim = [32, 16, 16, 32, 32]
         hidden_dim = [ 16, 16, 16, 16, 8]
         num_layers = 5
@@ -43,23 +37,18 @@ class DrMVSNet(nn.Module):
         self.reg_loss = reg_loss
         self.return_depth = return_depth
         self.predict = predict
-        self.mask_net = SemanticNet()
 
     def forward(self, imgs, proj_matrices, depth_values):
-        imgs = torch.unbind(imgs, 1)
+        imgs = torch.unbind(imgs, 1) # [B, C, H, W] * N
         proj_matrices = torch.unbind(proj_matrices, 1)
         assert len(imgs) == len(proj_matrices), "Different number of images and projection matrices"
-        img_height, img_width = imgs[0].shape[2], imgs[0].shape[3]
-        num_depth = depth_values.shape[1]
-        num_views = len(imgs)
-
-        # process DrMVSNet
-        if not self.predict:
-            semantic_mask = self.mask_net(imgs[0])
+        img_height, img_width = imgs[0].shape[2], imgs[0].shape[3] # [B, C, H, W]
+        num_depth = depth_values.shape[1] # [B, N_depth]
+        num_views = len(imgs) # N
 
         # step 1. feature extraction
         # in: images; out: 32-channel feature maps
-        features = [self.feature(img) for img in imgs]
+        features = [self.feature(img) for img in imgs] # [B, 32, 512, 512] * N
 
         ref_feature, src_features = features[0], features[1:]
         ref_proj, src_projs = proj_matrices[0], proj_matrices[1:]
@@ -71,13 +60,12 @@ class DrMVSNet(nn.Module):
         if not self.return_depth: # Training Phase;
             for d in range(num_depth):
                 # step 2. differentiable homograph, build cost volume
-
                 ref_volume = ref_feature
                 warped_volumes = None
                 for src_fea, src_proj in zip(src_features, src_projs):
-                        warped_volume = homo_warping_depthwise(src_fea, src_proj, ref_proj, depth_values[:, d])
+                        warped_volume = homo_warping_depthwise(src_fea, src_proj, ref_proj, depth_values[:, d]) #[B, C, H, W]
                         warped_volume = (warped_volume - ref_volume).pow_(2)
-                        reweight = self.gatenet(warped_volume) 
+                        reweight = self.gatenet(warped_volume) # [B, C, H, W]
                         if warped_volumes is None:
                             warped_volumes = (reweight + 1) * warped_volume
                         else:
@@ -85,11 +73,11 @@ class DrMVSNet(nn.Module):
                 volume_variance = warped_volumes / len(src_features)
                 
                 # step 3. cost volume regularization
-                cost_reg, hidden_state= self.cost_regularization(-1 * volume_variance, hidden_state, d)
+                cost_reg, hidden_state= self.cost_regularization(-1 * volume_variance, hidden_state, d) # [B, 1, H, W]
                 cost_reg_list.append(cost_reg)
             
             
-            prob_volume = torch.stack(cost_reg_list, dim=1).squeeze(2)
+            prob_volume = torch.stack(cost_reg_list, dim=1).squeeze(2) # [B, D, H, W]
             prob_volume = F.softmax(prob_volume, dim=1) # get prob volume use for recurrent to decrease memory consumption
 
             if not self.reg_loss:
@@ -101,13 +89,10 @@ class DrMVSNet(nn.Module):
                         depth_index = depth_regression(prob_volume, depth_values=torch.arange(num_depth, device=prob_volume.device, dtype=torch.float)).long()
                         photometric_confidence = torch.gather(prob_volume_sum4, 1, depth_index.unsqueeze(1)).squeeze(1)
                     semantic_mask = photometric_confidence
-                # print(self.reg_loss)
                 return {"depth": depth, 'prob_volume': prob_volume, "semantic_mask":semantic_mask, "photometric_confidence": photometric_confidence}
             else:
                 depth = depth_regression(prob_volume, depth_values=depth_values)
-                # print(self.reg_loss)
                 with torch.no_grad():
-                    # photometric confidence
                     prob_volume_sum4 = 4 * F.avg_pool3d(F.pad(prob_volume.unsqueeze(1), pad=(0, 0, 0, 0, 1, 2)), (4, 1, 1), stride=1, padding=0).squeeze(1)
                     depth_index = depth_regression(prob_volume, depth_values=torch.arange(num_depth, device=prob_volume.device, dtype=torch.float)).long()
                     photometric_confidence = torch.gather(prob_volume_sum4, 1, depth_index.unsqueeze(1)).squeeze(1)
@@ -235,33 +220,33 @@ def gradient(pred):
     return D_dx, D_dy 
 
 def gradient_image(img):
-	#print(img.shape)
-	w = img.shape[3]
-	h = img.shape[2]
+    #print(img.shape)
+    w = img.shape[3]
+    h = img.shape[2]
 
-	r = F.pad(img, (0,1,0,0))[:,:,:,1:]
-	l = F.pad(img, (1,0,0,0))[:,:,:,:w]
-	t = F.pad(img, (0,0,1,0))[:,:,:h,:]
-	b = F.pad(img, (0,0,0,1))[:,:,1:,:]
-	dx = torch.abs(r - l)
-	dy = torch.abs(b - t)
-	dx[:,:,:,-1] = 0
-	dy[:,:,-1,:] = 0
-	return dx, dy	
+    r = F.pad(img, (0,1,0,0))[:,:,:,1:]
+    l = F.pad(img, (1,0,0,0))[:,:,:,:w]
+    t = F.pad(img, (0,0,1,0))[:,:,:h,:]
+    b = F.pad(img, (0,0,0,1))[:,:,1:,:]
+    dx = torch.abs(r - l)
+    dy = torch.abs(b - t)
+    dx[:,:,:,-1] = 0
+    dy[:,:,-1,:] = 0
+    return dx, dy	
 
 def compute_reconstr_loss_map(warped,ref,mask):
-	alpha = 0.5
-	mask = mask.unsqueeze(1).repeat(1,3,1,1)
+    alpha = 0.5
+    mask = mask.unsqueeze(1).repeat(1,3,1,1)
 
-	photo_loss = F.smooth_l1_loss(warped * mask, ref * mask,  reduce='none')
+    photo_loss = F.smooth_l1_loss(warped * mask, ref * mask,  reduce='none')
 
-	ref_dx, ref_dy = gradient_image(ref * mask)
-	warpped_dx, warpped_dy = gradient_image(warped * mask)
-	#print(ref_dx.shape)
-	#grad_loss = F.smooth_l1_loss(warpped_dx, ref_dx,  size_average=True) + F.smooth_l1_loss(warpped_dy, ref_dy,  size_average=True)
-	grad_loss = torch.abs(warpped_dx - ref_dx) + torch.abs(warpped_dy - ref_dy)
-	#print(grad_loss)
-	return (1 - alpha)*photo_loss + alpha*grad_loss
+    ref_dx, ref_dy = gradient_image(ref * mask)
+    warpped_dx, warpped_dy = gradient_image(warped * mask)
+    #print(ref_dx.shape)
+    #grad_loss = F.smooth_l1_loss(warpped_dx, ref_dx,  size_average=True) + F.smooth_l1_loss(warpped_dy, ref_dy,  size_average=True)
+    grad_loss = torch.abs(warpped_dx - ref_dx) + torch.abs(warpped_dy - ref_dy)
+    #print(grad_loss)
+    return (1 - alpha)*photo_loss + alpha*grad_loss
 
 def ssim(x, y, mask):
     c1 = 0.01**2
@@ -347,59 +332,59 @@ def simplifyDis(src_fea, mask, step):
     return loss_fn(V_before, V_after)
 
 def unsup_loss(imgs, proj_matrices, depth_est, semantic_mask):
-	#print("unsup")
-	#print(mask.shape)
-	imgs = torch.unbind(imgs, 1)
-	#print(len(imgs))
-	proj_matrices = torch.unbind(proj_matrices, 1)
-	assert len(imgs) == len(proj_matrices), "Different number of images and projection matrices"
-	img_height, img_width = imgs[0].shape[2], imgs[0].shape[3]
-	#num_depth = depth_value.shape[-1]
-	num_views = len(imgs)
-	mask = semantic_mask[:, 0, :, :]
-	step_mask = semantic_mask[:, 1, :, :]
-	
-	features = [img for img in imgs] #ref_num * 3
-	ref_features, src_features = features[0], features[1:]
-	
-	ref_proj, src_projs = proj_matrices[0], proj_matrices[1:]
-	batch, channels = ref_features.shape[0], ref_features.shape[1]
+    #print("unsup")
+    #print(mask.shape)
+    imgs = torch.unbind(imgs, 1)
+    #print(len(imgs))
+    proj_matrices = torch.unbind(proj_matrices, 1)
+    assert len(imgs) == len(proj_matrices), "Different number of images and projection matrices"
+    img_height, img_width = imgs[0].shape[2], imgs[0].shape[3]
+    #num_depth = depth_value.shape[-1]
+    num_views = len(imgs)
+    mask = semantic_mask[:, 0, :, :]
+    step_mask = semantic_mask[:, 1, :, :]
+    
+    features = [img for img in imgs] #ref_num * 3
+    ref_features, src_features = features[0], features[1:]
+    
+    ref_proj, src_projs = proj_matrices[0], proj_matrices[1:]
+    batch, channels = ref_features.shape[0], ref_features.shape[1]
 
-	b = True
+    b = True
 
-	ssim_loss = 0
-	for src_fea, src_proj in zip(src_features, src_projs):
-		#print(src_fea.shape)
-		warped_volume, vis_mask = homo_warping(src_fea, src_proj, ref_proj, depth_est) 
+    ssim_loss = 0
+    for src_fea, src_proj in zip(src_features, src_projs):
+        #print(src_fea.shape)
+        warped_volume, vis_mask = homo_warping(src_fea, src_proj, ref_proj, depth_est) 
 
-		recon_loss = compute_reconstr_loss_map(warped_volume, imgs[0].view(batch, 3, img_height, img_width), vis_mask)
-		ssim_loss += torch.mean(ssim(warped_volume, imgs[0].view(batch, 3, img_height, img_width), vis_mask))
-	
-		recon_loss = torch.mean(recon_loss, 1, keepdim = True)
-		#print(recon_loss.shape)
-		vis_mask = 1 - vis_mask		
-		res_map = recon_loss + 1e4 * vis_mask.unsqueeze(1)
+        recon_loss = compute_reconstr_loss_map(warped_volume, imgs[0].view(batch, 3, img_height, img_width), vis_mask)
+        ssim_loss += torch.mean(ssim(warped_volume, imgs[0].view(batch, 3, img_height, img_width), vis_mask))
+    
+        recon_loss = torch.mean(recon_loss, 1, keepdim = True)
+        #print(recon_loss.shape)
+        vis_mask = 1 - vis_mask		
+        res_map = recon_loss + 1e4 * vis_mask.unsqueeze(1)
 
-		if(b):
-			reproj_volume =  res_map
-			b = False		
-		else:																																																										
-			reproj_volume = torch.cat((reproj_volume, res_map), 1) #[B, N, H, W]
-	
-	smooth_loss = depth_smoothness(depth_est.view(batch, 1, img_height, img_width), imgs[0])
-		
-	top_vals, _ = torch.topk(reproj_volume, 3, dim = 1, largest = False, sorted = False)
+        if(b):
+            reproj_volume =  res_map
+            b = False		
+        else:																																																										
+            reproj_volume = torch.cat((reproj_volume, res_map), 1) #[B, N, H, W]
+    
+    smooth_loss = depth_smoothness(depth_est.view(batch, 1, img_height, img_width), imgs[0])
+        
+    top_vals, _ = torch.topk(reproj_volume, 3, dim = 1, largest = False, sorted = False)
 
-	top_masks = torch.where(top_vals < 1e4, torch.ones_like(top_vals), torch.zeros_like(top_vals))
-	top_vals = top_vals * top_masks
+    top_masks = torch.where(top_vals < 1e4, torch.ones_like(top_vals), torch.zeros_like(top_vals))
+    top_vals = top_vals * top_masks
 
-	reconstr_loss = torch.mean(torch.mean(top_vals, 1))
+    reconstr_loss = torch.mean(torch.mean(top_vals, 1))
 
-	simplify_loss = simplifyDis(ref_features, mask, step_mask)
+    simplify_loss = simplifyDis(ref_features, mask, step_mask)
 
-	loss = 12 * reconstr_loss + 6 * ssim_loss / (num_views - 1) + 0.18 * smooth_loss + simplify_loss
+    loss = 12 * reconstr_loss + 6 * ssim_loss / (num_views - 1) + 0.18 * smooth_loss + simplify_loss
 
-	return loss
+    return loss
 
             
 

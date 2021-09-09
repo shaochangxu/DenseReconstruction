@@ -126,7 +126,7 @@ if (not is_distributed) or (dist.get_rank() == 0):
 
 # model, optimizer
 if args.model_verison == "V1":
-    model = DrMVSNet(refine=args.refine, dp_ratio=args.dp_ratio, image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, reg_loss=args.reg_loss)
+    model = UMT_MVSNet_V1(refine=args.refine, dp_ratio=args.dp_ratio, image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, reg_loss=args.reg_loss)
 
 model.to(device)
 print('Number of model parameters: {}'.format(sum([p.data.nelement() for p in model.parameters()])))
