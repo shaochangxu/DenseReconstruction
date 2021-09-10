@@ -1,0 +1,211 @@
+The module torch.distributed.launch is deprecated and going to be removed in future.Migrate to torch.distributed.run
+WARNING:torch.distributed.run:--use_env is deprecated and will be removed in future releases.
+ Please read local_rank from `os.environ('LOCAL_RANK')` instead.
+INFO:torch.distributed.launcher.api:Starting elastic_operator with launch configs:
+  entrypoint       : train.py
+  min_nodes        : 1
+  max_nodes        : 1
+  nproc_per_node   : 1
+  run_id           : none
+  rdzv_backend     : static
+  rdzv_endpoint    : 127.0.0.1:10190
+  rdzv_configs     : {'rank': 0, 'timeout': 900}
+  max_restarts     : 3
+  monitor_interval : 5
+  log_dir          : None
+  metrics_cfg      : {}
+
+INFO:torch.distributed.elastic.agent.server.local_elastic_agent:log directory set to: /tmp/torchelastic_ntbiy41n/none_pl0q5woc
+INFO:torch.distributed.elastic.agent.server.api:[default] starting workers for entrypoint: python3
+INFO:torch.distributed.elastic.agent.server.api:[default] Rendezvous'ing worker group
+/usr/local/lib64/python3.6/site-packages/torch/distributed/elastic/utils/store.py:53: FutureWarning: This is an experimental API and will be changed in future.
+  "This is an experimental API and will be changed in future.", FutureWarning
+INFO:torch.distributed.elastic.agent.server.api:[default] Rendezvous complete for workers. Result:
+  restart_count=0
+  master_addr=127.0.0.1
+  master_port=10190
+  group_rank=0
+  group_world_size=1
+  local_ranks=[0]
+  role_ranks=[0]
+  global_ranks=[0]
+  role_world_sizes=[1]
+  global_world_sizes=[1]
+
+INFO:torch.distributed.elastic.agent.server.api:[default] Starting worker group
+INFO:torch.distributed.elastic.multiprocessing:Setting worker0 reply file to: /tmp/torchelastic_ntbiy41n/none_pl0q5woc/attempt_0/0/error.json
+usage: train.py [-h] [--model_version {V1,V2,V3}]
+                [--loss {mvsnet_loss,mvsnet_cls_loss,unsup_loss}]
+                [--refine REFINE] [--dp_ratio DP_RATIO]
+                [--inverse_depth INVERSE_DEPTH] [--using_apex] [--sync_bn]
+                [--reg_loss REG_LOSS] [--max_h MAX_H] [--max_w MAX_W]
+                [--local_rank LOCAL_RANK] [--view_num VIEW_NUM]
+                [--image_scale IMAGE_SCALE] [--ngpu NGPU] [--dataset DATASET]
+                [--trainpath TRAINPATH] [--trainlist TRAINLIST]
+                [--epochs EPOCHS] [--lr LR] [--loss_w LOSS_W]
+                [--lrepochs LREPOCHS] [--lr_scheduler LR_SCHEDULER]
+                [--optimizer OPTIMIZER] [--batch_size BATCH_SIZE]
+                [--numdepth NUMDEPTH] [--interval_scale INTERVAL_SCALE]
+                [--loadckpt LOADCKPT] [--logdir LOGDIR] [--save_dir SAVE_DIR]
+train.py: error: unrecognized arguments: ./checkpoints
+ERROR:torch.distributed.elastic.multiprocessing.api:failed (exitcode: 2) local_rank: 0 (pid: 501446) of binary: /usr/bin/python3
+ERROR:torch.distributed.elastic.agent.server.local_elastic_agent:[default] Worker group failed
+INFO:torch.distributed.elastic.agent.server.api:[default] Worker group FAILED. 3/3 attempts left; will restart worker group
+INFO:torch.distributed.elastic.agent.server.api:[default] Stopping worker group
+INFO:torch.distributed.elastic.agent.server.api:[default] Rendezvous'ing worker group
+INFO:torch.distributed.elastic.agent.server.api:[default] Rendezvous complete for workers. Result:
+  restart_count=1
+  master_addr=127.0.0.1
+  master_port=10190
+  group_rank=0
+  group_world_size=1
+  local_ranks=[0]
+  role_ranks=[0]
+  global_ranks=[0]
+  role_world_sizes=[1]
+  global_world_sizes=[1]
+
+INFO:torch.distributed.elastic.agent.server.api:[default] Starting worker group
+INFO:torch.distributed.elastic.multiprocessing:Setting worker0 reply file to: /tmp/torchelastic_ntbiy41n/none_pl0q5woc/attempt_1/0/error.json
+usage: train.py [-h] [--model_version {V1,V2,V3}]
+                [--loss {mvsnet_loss,mvsnet_cls_loss,unsup_loss}]
+                [--refine REFINE] [--dp_ratio DP_RATIO]
+                [--inverse_depth INVERSE_DEPTH] [--using_apex] [--sync_bn]
+                [--reg_loss REG_LOSS] [--max_h MAX_H] [--max_w MAX_W]
+                [--local_rank LOCAL_RANK] [--view_num VIEW_NUM]
+                [--image_scale IMAGE_SCALE] [--ngpu NGPU] [--dataset DATASET]
+                [--trainpath TRAINPATH] [--trainlist TRAINLIST]
+                [--epochs EPOCHS] [--lr LR] [--loss_w LOSS_W]
+                [--lrepochs LREPOCHS] [--lr_scheduler LR_SCHEDULER]
+                [--optimizer OPTIMIZER] [--batch_size BATCH_SIZE]
+                [--numdepth NUMDEPTH] [--interval_scale INTERVAL_SCALE]
+                [--loadckpt LOADCKPT] [--logdir LOGDIR] [--save_dir SAVE_DIR]
+train.py: error: unrecognized arguments: ./checkpoints
+ERROR:torch.distributed.elastic.multiprocessing.api:failed (exitcode: 2) local_rank: 0 (pid: 505675) of binary: /usr/bin/python3
+ERROR:torch.distributed.elastic.agent.server.local_elastic_agent:[default] Worker group failed
+INFO:torch.distributed.elastic.agent.server.api:[default] Worker group FAILED. 2/3 attempts left; will restart worker group
+INFO:torch.distributed.elastic.agent.server.api:[default] Stopping worker group
+INFO:torch.distributed.elastic.agent.server.api:[default] Rendezvous'ing worker group
+INFO:torch.distributed.elastic.agent.server.api:[default] Rendezvous complete for workers. Result:
+  restart_count=2
+  master_addr=127.0.0.1
+  master_port=10190
+  group_rank=0
+  group_world_size=1
+  local_ranks=[0]
+  role_ranks=[0]
+  global_ranks=[0]
+  role_world_sizes=[1]
+  global_world_sizes=[1]
+
+INFO:torch.distributed.elastic.agent.server.api:[default] Starting worker group
+INFO:torch.distributed.elastic.multiprocessing:Setting worker0 reply file to: /tmp/torchelastic_ntbiy41n/none_pl0q5woc/attempt_2/0/error.json
+usage: train.py [-h] [--model_version {V1,V2,V3}]
+                [--loss {mvsnet_loss,mvsnet_cls_loss,unsup_loss}]
+                [--refine REFINE] [--dp_ratio DP_RATIO]
+                [--inverse_depth INVERSE_DEPTH] [--using_apex] [--sync_bn]
+                [--reg_loss REG_LOSS] [--max_h MAX_H] [--max_w MAX_W]
+                [--local_rank LOCAL_RANK] [--view_num VIEW_NUM]
+                [--image_scale IMAGE_SCALE] [--ngpu NGPU] [--dataset DATASET]
+                [--trainpath TRAINPATH] [--trainlist TRAINLIST]
+                [--epochs EPOCHS] [--lr LR] [--loss_w LOSS_W]
+                [--lrepochs LREPOCHS] [--lr_scheduler LR_SCHEDULER]
+                [--optimizer OPTIMIZER] [--batch_size BATCH_SIZE]
+                [--numdepth NUMDEPTH] [--interval_scale INTERVAL_SCALE]
+                [--loadckpt LOADCKPT] [--logdir LOGDIR] [--save_dir SAVE_DIR]
+train.py: error: unrecognized arguments: ./checkpoints
+ERROR:torch.distributed.elastic.multiprocessing.api:failed (exitcode: 2) local_rank: 0 (pid: 512067) of binary: /usr/bin/python3
+ERROR:torch.distributed.elastic.agent.server.local_elastic_agent:[default] Worker group failed
+INFO:torch.distributed.elastic.agent.server.api:[default] Worker group FAILED. 1/3 attempts left; will restart worker group
+INFO:torch.distributed.elastic.agent.server.api:[default] Stopping worker group
+INFO:torch.distributed.elastic.agent.server.api:[default] Rendezvous'ing worker group
+INFO:torch.distributed.elastic.agent.server.api:[default] Rendezvous complete for workers. Result:
+  restart_count=3
+  master_addr=127.0.0.1
+  master_port=10190
+  group_rank=0
+  group_world_size=1
+  local_ranks=[0]
+  role_ranks=[0]
+  global_ranks=[0]
+  role_world_sizes=[1]
+  global_world_sizes=[1]
+
+INFO:torch.distributed.elastic.agent.server.api:[default] Starting worker group
+INFO:torch.distributed.elastic.multiprocessing:Setting worker0 reply file to: /tmp/torchelastic_ntbiy41n/none_pl0q5woc/attempt_3/0/error.json
+usage: train.py [-h] [--model_version {V1,V2,V3}]
+                [--loss {mvsnet_loss,mvsnet_cls_loss,unsup_loss}]
+                [--refine REFINE] [--dp_ratio DP_RATIO]
+                [--inverse_depth INVERSE_DEPTH] [--using_apex] [--sync_bn]
+                [--reg_loss REG_LOSS] [--max_h MAX_H] [--max_w MAX_W]
+                [--local_rank LOCAL_RANK] [--view_num VIEW_NUM]
+                [--image_scale IMAGE_SCALE] [--ngpu NGPU] [--dataset DATASET]
+                [--trainpath TRAINPATH] [--trainlist TRAINLIST]
+                [--epochs EPOCHS] [--lr LR] [--loss_w LOSS_W]
+                [--lrepochs LREPOCHS] [--lr_scheduler LR_SCHEDULER]
+                [--optimizer OPTIMIZER] [--batch_size BATCH_SIZE]
+                [--numdepth NUMDEPTH] [--interval_scale INTERVAL_SCALE]
+                [--loadckpt LOADCKPT] [--logdir LOGDIR] [--save_dir SAVE_DIR]
+train.py: error: unrecognized arguments: ./checkpoints
+ERROR:torch.distributed.elastic.multiprocessing.api:failed (exitcode: 2) local_rank: 0 (pid: 516344) of binary: /usr/bin/python3
+ERROR:torch.distributed.elastic.agent.server.local_elastic_agent:[default] Worker group failed
+INFO:torch.distributed.elastic.agent.server.api:Local worker group finished (FAILED). Waiting 300 seconds for other agents to finish
+/usr/local/lib64/python3.6/site-packages/torch/distributed/elastic/utils/store.py:71: FutureWarning: This is an experimental API and will be changed in future.
+  "This is an experimental API and will be changed in future.", FutureWarning
+INFO:torch.distributed.elastic.agent.server.api:Done waiting for other agents. Elapsed: 0.00027441978454589844 seconds
+{"name": "torchelastic.worker.status.FAILED", "source": "WORKER", "timestamp": 0, "metadata": {"run_id": "none", "global_rank": 0, "group_rank": 0, "worker_id": "516344", "role": "default", "hostname": "h07e07259.sqa.eu95", "state": "FAILED", "total_run_time": 20, "rdzv_backend": "static", "raw_error": "{\"message\": \"<NONE>\"}", "metadata": "{\"group_world_size\": 1, \"entry_point\": \"python3\", \"local_rank\": [0], \"role_rank\": [0], \"role_world_size\": [1]}", "agent_restarts": 3}}
+{"name": "torchelastic.worker.status.SUCCEEDED", "source": "AGENT", "timestamp": 0, "metadata": {"run_id": "none", "global_rank": null, "group_rank": 0, "worker_id": null, "role": "default", "hostname": "h07e07259.sqa.eu95", "state": "SUCCEEDED", "total_run_time": 20, "rdzv_backend": "static", "raw_error": null, "metadata": "{\"group_world_size\": 1, \"entry_point\": \"python3\"}", "agent_restarts": 3}}
+/usr/local/lib64/python3.6/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py:354: UserWarning: 
+
+**********************************************************************
+               CHILD PROCESS FAILED WITH NO ERROR_FILE                
+**********************************************************************
+CHILD PROCESS FAILED WITH NO ERROR_FILE
+Child process 516344 (local_rank 0) FAILED (exitcode 2)
+Error msg: Process failed with exitcode 2
+Without writing an error file to <N/A>.
+While this DOES NOT affect the correctness of your application,
+no trace information about the error will be available for inspection.
+Consider decorating your top level entrypoint function with
+torch.distributed.elastic.multiprocessing.errors.record. Example:
+
+  from torch.distributed.elastic.multiprocessing.errors import record
+
+  @record
+  def trainer_main(args):
+     # do train
+**********************************************************************
+  warnings.warn(_no_error_file_warning_msg(rank, failure))
+Traceback (most recent call last):
+  File "/usr/lib64/python3.6/runpy.py", line 193, in _run_module_as_main
+    "__main__", mod_spec)
+  File "/usr/lib64/python3.6/runpy.py", line 85, in _run_code
+    exec(code, run_globals)
+  File "/usr/local/lib64/python3.6/site-packages/torch/distributed/launch.py", line 173, in <module>
+    main()
+  File "/usr/local/lib64/python3.6/site-packages/torch/distributed/launch.py", line 169, in main
+    run(args)
+  File "/usr/local/lib64/python3.6/site-packages/torch/distributed/run.py", line 624, in run
+    )(*cmd_args)
+  File "/usr/local/lib64/python3.6/site-packages/torch/distributed/launcher/api.py", line 116, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/usr/local/lib64/python3.6/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 348, in wrapper
+    return f(*args, **kwargs)
+  File "/usr/local/lib64/python3.6/site-packages/torch/distributed/launcher/api.py", line 247, in launch_agent
+    failures=result.failures,
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+***************************************
+            train.py FAILED            
+=======================================
+Root Cause:
+[0]:
+  time: 2021-09-10_14:26:03
+  rank: 0 (local_rank: 0)
+  exitcode: 2 (pid: 516344)
+  error_file: <N/A>
+  msg: "Process failed with exitcode 2"
+=======================================
+Other Failures:
+  <NO_OTHER_FAILURES>
+***************************************
+

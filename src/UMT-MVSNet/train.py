@@ -84,6 +84,7 @@ parser.add_argument('--save_dir', default=None, help='the directory to save chec
 # parse arguments and check
 args = parser.parse_args()
 testpath = args.trainpath
+testlist = args.trainlist
 
 set_random_seed(1)
 device = torch.device('cuda')
@@ -125,8 +126,8 @@ if (not is_distributed) or (dist.get_rank() == 0):
     print_args(args)
 
 # model, optimizer
-if args.model_verison == "V1":
-    model = UMT_MVSNet_V1(refine=args.refine, dp_ratio=args.dp_ratio, image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, reg_loss=args.reg_loss)
+if args.model_version == "V1":
+    model = UMT_MVSNet_V1(image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, reg_loss=args.reg_loss)
 
 model.to(device)
 print('Number of model parameters: {}'.format(sum([p.data.nelement() for p in model.parameters()])))
@@ -196,8 +197,8 @@ train_dataset = MVSDataset(
     have_depth=(args.loss != 'unsup_loss')) # Training with False, Test with inverse_depth
 
 test_dataset = MVSDataset(
-    datapath = args.testpath, 
-    listfile = args.testlist, 
+    datapath = testpath, 
+    listfile = testlist, 
     mode = "infer", 
     nviews = 5, 
     ndepths = args.numdepth, 
@@ -210,8 +211,8 @@ test_dataset = MVSDataset(
 )
 
 reverse_test_dataset = MVSDataset(
-    datapath = args.testpath, 
-    listfile = args.testlist, 
+    datapath = testpath, 
+    listfile = testlist, 
     mode = "infer", 
     nviews = 5, 
     ndepths = args.numdepth, 
@@ -237,9 +238,9 @@ if is_distributed:
     ResTestImgLoader = DataLoader(reverse_test_dataset, args.batch_size, sampler=test_sampler, num_workers=4, drop_last=False,
                                     pin_memory=True)                                               
 else:
-    TrainImgLoader = DataLoader(train_dataset, args.batch_size, shuffle=True, num_workers=12, drop_last=True)
-    TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=4, drop_last=False)
-    ResTestImgLoader = DataLoader(reverse_test_dataset, args.batch_size, shuffle=False, num_workers=4, drop_last=False)
+    TrainImgLoader = DataLoader(train_dataset, args.batch_size, shuffle=True, num_workers=2, drop_last=True)
+    TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=2, drop_last=False)
+    ResTestImgLoader = DataLoader(reverse_test_dataset, args.batch_size, shuffle=False, num_workers=2, drop_last=False)
 
 # main function
 def train():
@@ -376,8 +377,11 @@ def train_sample(sample):
     else:
         depth_gt = sample_cuda["depth"]
         depth_est = outputs["depth"]
-        semantic_mask = outputs["semantic_mask"]
-        loss = model_loss(sample_cuda["imgs"], depth_est, depth_gt, mask, semantic_mask)
+        if args.model_version=="V1":
+            loss = model_loss(sample_cuda["imgs"], depth_est, depth_gt, mask)
+        else:
+            semantic_mask = outputs["semantic_mask"]
+            loss = model_loss(sample_cuda["imgs"], depth_est, depth_gt, mask, True, semantic_mask)
 
     if is_distributed and args.using_apex:
         with amp.scale_loss(loss, optimizer) as scaled_loss:

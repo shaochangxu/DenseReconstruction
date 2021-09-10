@@ -2,7 +2,7 @@ from torch.utils.data import Dataset
 import numpy as np
 import os
 from PIL import Image
-from data_io import *
+from datasets.data_io import *
 
 
 '''
@@ -107,11 +107,13 @@ class MVSDataset(Dataset):
 
     def read_img(self, filename):
         img = Image.open(filename)
+        #w=512 
+        #h=512
         if self.image_scale != 1.0:
             w, h = img.size
             img = img.resize((int(self.image_scale * w), int(self.image_scale*h))) # origin: 0.25
  
-        return self.center_img(np.array(img, dtype=np.float32))	
+        return self.center_img(np.array(img).astype(np.float32))	
 
     def center_img(self, img): # this is very important for batch normalization
         img = img.astype(np.float32)
@@ -121,7 +123,7 @@ class MVSDataset(Dataset):
 
     def read_depth(self, filename):
         # read pfm depth file
-        return np.array(read_pfm(filename)[0], dtype=np.float32)
+        return np.array(read_pfm(filename)[0]).astype(np.float32)
 
     def __getitem__(self, idx):
         
@@ -179,8 +181,8 @@ class MVSDataset(Dataset):
                 if self.have_depth: 
                     mask = self.read_img(mask_filename)
                     depth = self.read_depth(depth_filename)
-                    mask = np.array((depth > depth_min+depth_interval) & (depth < depth_min+(self.ndepths-2)*depth_interval), dtype=np.float32)
-                    mask = np.array((depth >= depth_min) & (depth <= depth_end), dtype=np.float32)
+                    mask = np.array((depth > depth_min+depth_interval) & (depth < depth_min+(self.ndepths-2)*depth_interval)).astype(np.float32)
+                    mask = np.array((depth >= depth_min) & (depth <= depth_end)).astype(np.float32)
                 else:
                     mask = np.ones((h, w), dtype=np.float32)
   

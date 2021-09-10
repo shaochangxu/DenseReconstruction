@@ -17,7 +17,7 @@ class UMT_MVSNet_V1(nn.Module):
         super(UMT_MVSNet_V1, self).__init__() # parent init
         
         self.gn = gn
-        self.feature = FeatNet(gn=self.gn)
+        self.feature = FeatNet()
 
         input_size = (int(max_h*image_scale), int(max_w*image_scale)) #height, width
 
@@ -29,7 +29,7 @@ class UMT_MVSNet_V1(nn.Module):
         kernel_size = [(3, 3) for i in range(num_layers)]
         
         self.cost_regularization = UNetConvLSTM(input_size, input_dim, hidden_dim, kernel_size, num_layers,
-             batch_first=False, bias=True, return_all_layers=False, gn=self.gn)
+             bias=True, return_all_layers=False, gn=self.gn)
     
         # Cost Aggregation
         self.gatenet = gatenet(self.gn, 32)
@@ -42,9 +42,10 @@ class UMT_MVSNet_V1(nn.Module):
         imgs = torch.unbind(imgs, 1) # [B, C, H, W] * N
         proj_matrices = torch.unbind(proj_matrices, 1)
         assert len(imgs) == len(proj_matrices), "Different number of images and projection matrices"
-        img_height, img_width = imgs[0].shape[2], imgs[0].shape[3] # [B, C, H, W]
+        batch_size, img_height, img_width = imgs[0].shape[0], imgs[0].shape[2], imgs[0].shape[3] # [B, C, H, W]
         num_depth = depth_values.shape[1] # [B, N_depth]
         num_views = len(imgs) # N
+        
 
         # step 1. feature extraction
         # in: images; out: 32-channel feature maps
@@ -79,7 +80,7 @@ class UMT_MVSNet_V1(nn.Module):
             
             prob_volume = torch.stack(cost_reg_list, dim=1).squeeze(2) # [B, D, H, W]
             prob_volume = F.softmax(prob_volume, dim=1) # get prob volume use for recurrent to decrease memory consumption
-
+            semantic_mask = torch.ones([batch_size, 2, img_height, img_width])
             if not self.reg_loss:
                 depth = depth_regression(prob_volume, depth_values=depth_values)
                 if self.predict:
@@ -88,7 +89,6 @@ class UMT_MVSNet_V1(nn.Module):
                         prob_volume_sum4 = 4 * F.avg_pool3d(F.pad(prob_volume.unsqueeze(1), pad=(0, 0, 0, 0, 1, 2)), (4, 1, 1), stride=1, padding=0).squeeze(1)
                         depth_index = depth_regression(prob_volume, depth_values=torch.arange(num_depth, device=prob_volume.device, dtype=torch.float)).long()
                         photometric_confidence = torch.gather(prob_volume_sum4, 1, depth_index.unsqueeze(1)).squeeze(1)
-                    semantic_mask = photometric_confidence
                 return {"depth": depth, 'prob_volume': prob_volume, "semantic_mask":semantic_mask, "photometric_confidence": photometric_confidence}
             else:
                 depth = depth_regression(prob_volume, depth_values=depth_values)
@@ -97,9 +97,6 @@ class UMT_MVSNet_V1(nn.Module):
                     depth_index = depth_regression(prob_volume, depth_values=torch.arange(num_depth, device=prob_volume.device, dtype=torch.float)).long()
                     photometric_confidence = torch.gather(prob_volume_sum4, 1, depth_index.unsqueeze(1)).squeeze(1)
                 
-                if self.predict:
-                    semantic_mask = photometric_confidence
-                #return {'prob_volume': prob_volume, "depth": depth, "photometric_confidence": photometric_confidence, "semantic_mask":semantic_mask}
                 return {"depth": depth, "photometric_confidence": photometric_confidence, "semantic_mask":semantic_mask}
         else:
             shape = ref_feature.shape
@@ -170,13 +167,16 @@ def get_propability_map(prob_volume, depth, depth_values):
     prob_map = torch.clamp(prob_map_left0 + prob_map_left1 + prob_map_right0 + prob_map_right1, 0, 0.9999)
     return prob_map
 
-def mvsnet_loss(imgs, depth_est, depth_gt, mask, semantic_mask):
+def mvsnet_loss(imgs, depth_est, depth_gt, mask, with_semantic_loss=False, semantic_mask=None):
     mask = mask > 0.5
-    mask1 = semantic_mask[:, 0, :, :]
-    step_mask = semantic_mask[:, 1, :, :]
-    ref_features = torch.unbind(imgs, 1)[0]
-    simplify_loss = simplifyDis(ref_features, mask1, step_mask)
-    return F.smooth_l1_loss(depth_est[mask], depth_gt[mask], size_average=True) + simplify_loss
+    if with_semantic_loss:
+        mask1 = semantic_mask[:, 0, :, :]
+        step_mask = semantic_mask[:, 1, :, :]
+        ref_features = torch.unbind(imgs, 1)[0]
+        simplify_loss = simplifyDis(ref_features, mask1, step_mask)
+        return F.smooth_l1_loss(depth_est[mask], depth_gt[mask], size_average=True) + simplify_loss
+    else:
+        return F.smooth_l1_loss(depth_est[mask], depth_gt[mask], size_average=True)
 
 def mvsnet_cls_loss(prob_volume, depth_gt, mask, depth_value, return_prob_map=False): 
     # depth_value: B * NUM

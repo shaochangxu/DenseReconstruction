@@ -7,7 +7,7 @@ d=8
 interval_scale=1.06
 lr=0.001
 lr_scheduler=cosinedecay
-loss=unsup_loss
+loss=mvsnet_loss
 optimizer=Adam
 loss_w=4
 image_scale=0.25
@@ -18,9 +18,9 @@ now=$(date +"%Y%m%d_%H%M%S")
 echo $name
 echo $now
 
-data_set = "dtu_yao"
-train_path = "/home/hadoop/scx/buaa/dtu_training"
-list_file = "./lists/dtu/train.txt"
+data_set="dtu_yao"
+train_path="/disk2/scx/buaa/mvs_training/dtu"
+list_file="./lists/dtu/train.txt"
 
 CUDA_VISIBLE_DEVICES=0 python3 -m torch.distributed.launch --nproc_per_node=$n --master_port 10190 train.py  \
         --model_version=V1 \
@@ -42,5 +42,5 @@ CUDA_VISIBLE_DEVICES=0 python3 -m torch.distributed.launch --nproc_per_node=$n -
         --numdepth=$d \
         --interval_scale=$interval_scale \
         --logdir=./logdir/${name} \
-        --savedir = ./checkpoints \
-        2>&1|tee ./${name}-${now}.log &
+        --save_dir=./checkpoints \
+        #2>&1|tee ./${name}-${now}.log &

@@ -33,7 +33,7 @@ class ConvGn(nn.Module):
             group_channel=8 # channel number in each group
             ):
         super(ConvGn, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias)
+        self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)
         self.group_channel=group_channel
         G = int(max(1, out_channels / self.group_channel))
         #print(G , out_channels)
