@@ -4,7 +4,98 @@ import numpy as np
 
 from .convlstm import *
 from .submodule import *
+from .vit_pytorch import *
 #from module import *
+
+class Transformer_FeatNet(nn.Module):
+    def __init__(self, hidden_dim=768):
+        super(Transformer_FeatNet, self).__init__()
+        
+        self.in_planes = hidden_dim
+        self.base = vit_small_patch16_224_TransReID(img_size=(256, 256), aie_xishu=2.5,local_feature=False, camera=0, view=0, stride_size=(16,16), drop_path_rate=0.1)
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        self.bottleneck = nn.BatchNorm1d(self.in_planes)
+    
+    def forward(self, x):  # label is unused if self.cos_layer == 'no'
+        global_feat = self.base(x)
+        feat = self.bottleneck(global_feat[0])
+        return feat
+
+class Transformer_CostNet(nn.Module):
+    def __init__(self, hidden_dim=768):
+        super(Transformer_CostNet, self).__init__()
+        encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=8, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=6)
+    
+    def forward(self, x):  # label is unused if self.cos_layer == 'no'
+        feat = self.transformer_encoder(x)
+        return feat
+
+class DecoderNet(nn.Module):
+    def __init__(self, input_size, hidden_dim=768, bias=False):
+        super(DecoderNet, self).__init__()
+        self.bias = bias
+
+        self.linear = nn.Linear(hidden_dim, (h * w) // 256)
+        self.linear2 = nn.Linear(64, 1)
+
+        self.conv0 = convgnrelu(8, 8, kernel_size=3, stride=1, dilation=1)
+        self.conv1 = convgnrelu(16, 16, kernel_size=3, stride=1, dilation=1)
+        self.conv2 = convgnrelu(32, 32, kernel_size=3, stride=1, dilation=1)
+        self.conv3 = convgnrelu(64, 64, kernel_size=3, stride=1, dilation=1)
+    
+        self.deconv_0 = deConvGnReLU(
+            1,
+            8, #16
+            kernel_size=3,
+            stride=2,
+            padding=1,
+            bias=self.bias,
+            output_padding=1
+        )
+
+        self.deconv_1 = deConvGnReLU(
+            8,
+            16, #16
+            kernel_size=3,
+            stride=2,
+            padding=1,
+            bias=self.bias,
+            output_padding=1
+        )
+
+        self.deconv_2 = deConvGnReLU(
+            16,
+            32, #16
+            kernel_size=3,
+            stride=2,
+            padding=1,
+            bias=self.bias,
+            output_padding=1
+        )
+
+        self.deconv_3 = deConvGnReLU(
+            32,
+            64, #16
+            kernel_size=3,
+            stride=2,
+            padding=1,
+            bias=self.bias,
+            output_padding=1
+        )
+
+    def forward(self, x):  # label is unused if self.cos_layer == 'no'
+        x = self.linear(x) # [BD, 768] => [BD, H*W/256]
+        x = x.reshape(x.shape[0], 1, self.h // 16, self.w // 16) # [BD, H*W/256] => [BD, 1, H/16, W/16]
+
+        x1 = self.conv0(self.deconv_0(x)) # [BD, 1, H/16, W/16] => [BD, 8, H/8, W/8]
+        x2 = self.conv1(self.deconv_1(x1)) # [BD, 8, H/16, W/16] => [BD, 16, H/4, W/4]
+        x3 = self.conv2(self.deconv_2(x2)) # [BD, 16, H/16, W/16] => [BD, 32, H/2, W/2]
+        x4 = self.conv3(self.deconv_3(x3)) # [BD, 32, H/16, W/16] => [BD, 64, H, W]
+
+        out = self.linear2(x4) # [BD, 64, H, W] => [BD, 1, H, W]
+        return out
+
 
 class FeatNet(nn.Module):
     def __init__(self):

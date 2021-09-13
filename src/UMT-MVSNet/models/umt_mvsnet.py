@@ -11,6 +11,74 @@ from .submodule import volumegatelight, volumegatelightgn
 # Recurrent Multi-scale Module
 from .rnnmodule import *
 
+class UMT_MVSNet_V2(nn.Module):
+    def __init__(self, h=512, w=512,
+                 reg_loss=False, return_depth=False, gn=True,  predict=False):
+        super(UMT_MVSNet_V2, self).__init__() # parent init
+
+        self.hidden_dim = 768
+        self.gn = gn
+        self.feature = Transformer_FeatNet(self.hidden_dim) # Transformer Net
+
+        self.cost_transformer = Transformer_CostNet(self.hidden_dim)
+        self.decoder = DecoderNet(input_size=(h, w), hidden_dim=self.hidden_dim, bias=True)
+
+    def forward(self, imgs, proj_matrices, depth_values):
+        imgs = torch.unbind(imgs, 1) # [B, C, H, W] * N
+        proj_matrices = torch.unbind(proj_matrices, 1)
+        assert len(imgs) == len(proj_matrices), "Different number of images and projection matrices"
+        batch_size, img_height, img_width = imgs[0].shape[0], imgs[0].shape[2], imgs[0].shape[3] # [B, C, H, W]
+        num_depth = depth_values.shape[1] # [B, N_depth]
+        num_views = len(imgs) # N
+        
+
+        ref_feature, src_features = imgs[0], imgs[1:]
+        ref_proj, src_projs = proj_matrices[0], proj_matrices[1:]
+        cost_reg_list = []
+
+        for d in range(num_depth):
+            # step 2. differentiable homograph, build cost volume
+            ref_volume = ref_feature
+            warped_volumes = None
+            for src_fea, src_proj in zip(src_features, src_projs):
+                    warped_volume = homo_warping_depthwise(src_fea, src_proj, ref_proj, depth_values[:, d]) #[B, C, H, W]
+                    warped_volume = (warped_volume - ref_volume).pow_(2)
+                    reweight = self.gatenet(warped_volume) # [B, C, H, W]
+                    if warped_volumes is None:
+                        warped_volumes = (reweight + 1) * warped_volume
+                    else:
+                        warped_volumes = warped_volumes + (reweight + 1) * warped_volume
+            volume_variance = warped_volumes / len(src_features)
+            cost_reg_list.append(self.feature(volume_variance)) # [B, 768] * D
+
+        prob_volume = torch.stack(cost_reg_list, dim=0).permute(1, 0, 2) # [B, D, 768]
+        prob_volume = self.cost_transformer(prob_volume) # [B, D, 768]
+
+        prob_volume.reshape(batch_size * num_depth, self.hidden_dim)
+        prob_volume = self.decoder(prob_volume) #[BD, 768] => [BD, H, W]
+
+        prob_volume = prob_volume.squeeze().reshape(batch_size, num_depth, img_height, img_width) #[B, D, H, W]
+        prob_volume = F.softmax(prob_volume, dim=1) # [B, H, W]
+        
+        semantic_mask = torch.ones([batch_size, 2, img_height, img_width])
+        if not self.reg_loss:
+            depth = depth_regression(prob_volume, depth_values=depth_values)
+            if self.predict:
+                with torch.no_grad():
+                    # photometric confidence
+                    prob_volume_sum4 = 4 * F.avg_pool3d(F.pad(prob_volume.unsqueeze(1), pad=(0, 0, 0, 0, 1, 2)), (4, 1, 1), stride=1, padding=0).squeeze(1)
+                    depth_index = depth_regression(prob_volume, depth_values=torch.arange(num_depth, device=prob_volume.device, dtype=torch.float)).long()
+                    photometric_confidence = torch.gather(prob_volume_sum4, 1, depth_index.unsqueeze(1)).squeeze(1)
+            return {"depth": depth, 'prob_volume': prob_volume, "semantic_mask":semantic_mask, "photometric_confidence": photometric_confidence}
+        else:
+            depth = depth_regression(prob_volume, depth_values=depth_values)
+            with torch.no_grad():
+                prob_volume_sum4 = 4 * F.avg_pool3d(F.pad(prob_volume.unsqueeze(1), pad=(0, 0, 0, 0, 1, 2)), (4, 1, 1), stride=1, padding=0).squeeze(1)
+                depth_index = depth_regression(prob_volume, depth_values=torch.arange(num_depth, device=prob_volume.device, dtype=torch.float)).long()
+                photometric_confidence = torch.gather(prob_volume_sum4, 1, depth_index.unsqueeze(1)).squeeze(1)
+            
+            return {"depth": depth, "photometric_confidence": photometric_confidence, "semantic_mask":semantic_mask}
+
 class UMT_MVSNet_V1(nn.Module):
     def __init__(self, image_scale=0.25, max_h=512, max_w=512,
                  reg_loss=False, return_depth=False, gn=True,  predict=False):

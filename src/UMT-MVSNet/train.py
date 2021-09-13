@@ -46,8 +46,8 @@ parser.add_argument('--sync_bn', action='store_true',help='enabling apex sync BN
 ##### for dsrmvsnet
 parser.add_argument('--reg_loss', help='True or False flag, input should be either "True" or "False".',
     type=ast.literal_eval, default=False)
-parser.add_argument('--max_h', type=int, default=512, help='Maximum image height when training')
-parser.add_argument('--max_w', type=int, default=512, help='Maximum image width when training.')
+parser.add_argument('--max_h', type=int, default=512, help='Maximum image height when training. Exact Value for V2 model version')
+parser.add_argument('--max_w', type=int, default=512, help='Maximum image width when training. Exact Value for V2 model version')
 ##### end dsrmvsnet
 
 parser.add_argument('--local_rank', type=int, default=0, help='training view num setting')
@@ -128,6 +128,8 @@ if (not is_distributed) or (dist.get_rank() == 0):
 # model, optimizer
 if args.model_version == "V1":
     model = UMT_MVSNet_V1(image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, reg_loss=args.reg_loss)
+elif args.model_version == "V2":
+    model = UMT_MVSNet_V2(h=args.max_h, w=args.max_w, reg_loss=args.reg_loss)
 
 model.to(device)
 print('Number of model parameters: {}'.format(sum([p.data.nelement() for p in model.parameters()])))
