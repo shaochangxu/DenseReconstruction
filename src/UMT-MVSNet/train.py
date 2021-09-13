@@ -288,6 +288,7 @@ def train():
                 if do_summary:
                     save_scalars(logger, 'train', scalar_outputs, global_step)
                     logger.add_scalar('train/lr', lr, global_step)
+                    logger.add_scalar('train_loss', loss, global_step)
                     save_images(logger, 'train', image_outputs, global_step)
                 del scalar_outputs, image_outputs
                 print(
@@ -323,6 +324,7 @@ def train():
                 if do_summary:
                     save_scalars(logger, 'test', scalar_outputs, global_step)
                     save_images(logger, 'test', image_outputs, global_step)
+                    logger.add_scalar('test_loss', loss, global_step)
                     print('Epoch {}/{}, Iter {}/{}, test loss = {:.3f}, time = {:3f}'.format(
                                     epoch_idx, args.epochs, batch_idx,
                                     len(TestImgLoader), loss,
