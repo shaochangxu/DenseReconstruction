@@ -18,11 +18,16 @@ class UMT_MVSNet_V2(nn.Module):
 
         self.hidden_dim = 768
         self.gn = gn
-        self.feature = Transformer_FeatNet(self.hidden_dim) # Transformer Net
-
+        self.reg_loss = reg_loss
+        self.return_depth = return_depth
+        self.predict = predict
+        self.feature = Transformer_FeatNet(input_size=(h, w),hidden_dim=self.hidden_dim) # Transformer Net
+        self.gatenet = gatenet(self.gn, 3)
+        
         self.cost_transformer = Transformer_CostNet(self.hidden_dim)
         self.decoder = DecoderNet(input_size=(h, w), hidden_dim=self.hidden_dim, bias=True)
 
+        
     def forward(self, imgs, proj_matrices, depth_values):
         imgs = torch.unbind(imgs, 1) # [B, C, H, W] * N
         proj_matrices = torch.unbind(proj_matrices, 1)
@@ -54,9 +59,8 @@ class UMT_MVSNet_V2(nn.Module):
         prob_volume = torch.stack(cost_reg_list, dim=0).permute(1, 0, 2) # [B, D, 768]
         prob_volume = self.cost_transformer(prob_volume) # [B, D, 768]
 
-        prob_volume.reshape(batch_size * num_depth, self.hidden_dim)
+        prob_volume = prob_volume.reshape(batch_size * num_depth, self.hidden_dim)
         prob_volume = self.decoder(prob_volume) #[BD, 768] => [BD, H, W]
-
         prob_volume = prob_volume.squeeze().reshape(batch_size, num_depth, img_height, img_width) #[B, D, H, W]
         prob_volume = F.softmax(prob_volume, dim=1) # [B, H, W]
         

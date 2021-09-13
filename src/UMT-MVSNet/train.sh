@@ -1,9 +1,9 @@
 #!/bin/bash
 data=$(date +"%m%d")
 n=1
-batch=8
-epochs=2
-d=8
+batch=2
+epochs=10
+d=64
 interval_scale=1.06
 lr=0.001
 lr_scheduler=cosinedecay
@@ -11,7 +11,7 @@ loss=mvsnet_loss
 optimizer=Adam
 loss_w=4
 image_scale=0.25
-view_num=7
+view_num=5
 
 name=${date}_checkpoints
 now=$(date +"%Y%m%d_%H%M%S")
@@ -23,8 +23,10 @@ train_path="/disk2/scx/buaa/mvs_training/dtu"
 list_file="./lists/dtu/train.txt"
 
 CUDA_VISIBLE_DEVICES=0 python3 -m torch.distributed.launch --nproc_per_node=$n --master_port 10190 train.py  \
-        --model_version=V1 \
+        --model_version=V2 \
         --loss=${loss} \
+		--max_h=128 \
+		--max_w=160 \
         --dataset=$data_set \
         --trainpath=${train_path} \
         --trainlist=${list_file} \

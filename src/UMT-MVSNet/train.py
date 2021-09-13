@@ -381,7 +381,7 @@ def train_sample(sample):
     else:
         depth_gt = sample_cuda["depth"]
         depth_est = outputs["depth"]
-        if args.model_version=="V1":
+        if args.model_version=="V1" or args.model_version=="V2":
             loss = model_loss(sample_cuda["imgs"], depth_est, depth_gt, mask)
         else:
             semantic_mask = outputs["semantic_mask"]
