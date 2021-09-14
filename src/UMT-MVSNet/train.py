@@ -130,6 +130,9 @@ if args.model_version == "V1":
     model = UMT_MVSNet_V1(image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, reg_loss=args.reg_loss)
 elif args.model_version == "V2":
     model = UMT_MVSNet_V2(h=args.max_h, w=args.max_w, reg_loss=args.reg_loss)
+elif args.model_version == "V3":
+    model = UMT_MVSNet_V3(h=args.max_h, w=args.max_w, reg_loss=args.reg_loss, with_semantic_map=False)
+    args.loss = "unsup_loss"
 
 model.to(device)
 print('Number of model parameters: {}'.format(sum([p.data.nelement() for p in model.parameters()])))

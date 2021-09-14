@@ -10,6 +10,87 @@ import math
 from .submodule import volumegatelight, volumegatelightgn
 # Recurrent Multi-scale Module
 from .rnnmodule import *
+from .mask_net import *
+
+class UMT_MVSNet_V3(nn.Module):
+    def __init__(self, h=512, w=512,
+                 reg_loss=False, return_depth=False, gn=True,  predict=False, with_semantic_map=False):
+        super(UMT_MVSNet_V3, self).__init__() # parent init
+
+        self.hidden_dim = 768
+        self.gn = gn
+        self.reg_loss = reg_loss
+        self.return_depth = return_depth
+        self.predict = predict
+        self.with_semantic_map = with_semantic_map
+
+        self.feature = Transformer_FeatNet(input_size=(h, w),hidden_dim=self.hidden_dim) # Transformer Net
+        self.gatenet = gatenet(self.gn, 3)
+        
+        self.cost_transformer = Transformer_CostNet(self.hidden_dim)
+        self.decoder = DecoderNet(input_size=(h, w), hidden_dim=self.hidden_dim, bias=True)
+        if self.with_semantic_map:
+            self.semantic_net = UNet(n_init_features = 4)
+        else:
+            self.semantic_net = UNet(n_init_features = 3)
+        
+    def forward(self, imgs, proj_matrices, depth_values, semantic_map=None):
+        imgs = torch.unbind(imgs, 1) # [B, C, H, W] * N
+        proj_matrices = torch.unbind(proj_matrices, 1)
+        assert len(imgs) == len(proj_matrices), "Different number of images and projection matrices"
+        batch_size, img_height, img_width = imgs[0].shape[0], imgs[0].shape[2], imgs[0].shape[3] # [B, C, H, W]
+        num_depth = depth_values.shape[1] # [B, N_depth]
+        num_views = len(imgs) # N
+        
+        ref_feature, src_features = imgs[0], imgs[1:]
+        ref_proj, src_projs = proj_matrices[0], proj_matrices[1:]
+        cost_reg_list = []
+
+        for d in range(num_depth):
+            # step 2. differentiable homograph, build cost volume
+            ref_volume = ref_feature
+            warped_volumes = None
+            for src_fea, src_proj in zip(src_features, src_projs):
+                    warped_volume = homo_warping_depthwise(src_fea, src_proj, ref_proj, depth_values[:, d]) #[B, C, H, W]
+                    warped_volume = (warped_volume - ref_volume).pow_(2)
+                    reweight = self.gatenet(warped_volume) # [B, C, H, W]
+                    if warped_volumes is None:
+                        warped_volumes = (reweight + 1) * warped_volume
+                    else:
+                        warped_volumes = warped_volumes + (reweight + 1) * warped_volume
+            volume_variance = warped_volumes / len(src_features)
+            cost_reg_list.append(self.feature(volume_variance)) # [B, 768] * D
+
+        prob_volume = torch.stack(cost_reg_list, dim=0).permute(1, 0, 2) # [B, D, 768]
+        prob_volume = self.cost_transformer(prob_volume) # [B, D, 768]
+
+        prob_volume = prob_volume.reshape(batch_size * num_depth, self.hidden_dim)
+        prob_volume = self.decoder(prob_volume) #[BD, 768] => [BD, H, W]
+        prob_volume = prob_volume.squeeze().reshape(batch_size, num_depth, img_height, img_width) #[B, D, H, W]
+        prob_volume = F.softmax(prob_volume, dim=1) # [B, H, W]
+        
+        if self.with_semantic_map:
+            semantic_mask = self.semantic_net(torch.cat([imgs[0], semantic_map], dim=1))
+        else:
+            semantic_mask = self.semantic_net(imgs[0])
+
+        if not self.reg_loss:
+            depth = depth_regression(prob_volume, depth_values=depth_values)
+            if self.predict:
+                with torch.no_grad():
+                    # photometric confidence
+                    prob_volume_sum4 = 4 * F.avg_pool3d(F.pad(prob_volume.unsqueeze(1), pad=(0, 0, 0, 0, 1, 2)), (4, 1, 1), stride=1, padding=0).squeeze(1)
+                    depth_index = depth_regression(prob_volume, depth_values=torch.arange(num_depth, device=prob_volume.device, dtype=torch.float)).long()
+                    photometric_confidence = torch.gather(prob_volume_sum4, 1, depth_index.unsqueeze(1)).squeeze(1)
+            return {"depth": depth, 'prob_volume': prob_volume, "semantic_mask":semantic_mask, "photometric_confidence": photometric_confidence}
+        else:
+            depth = depth_regression(prob_volume, depth_values=depth_values)
+            with torch.no_grad():
+                prob_volume_sum4 = 4 * F.avg_pool3d(F.pad(prob_volume.unsqueeze(1), pad=(0, 0, 0, 0, 1, 2)), (4, 1, 1), stride=1, padding=0).squeeze(1)
+                depth_index = depth_regression(prob_volume, depth_values=torch.arange(num_depth, device=prob_volume.device, dtype=torch.float)).long()
+                photometric_confidence = torch.gather(prob_volume_sum4, 1, depth_index.unsqueeze(1)).squeeze(1)
+            
+            return {"depth": depth, "photometric_confidence": photometric_confidence, "semantic_mask":semantic_mask}
 
 class UMT_MVSNet_V2(nn.Module):
     def __init__(self, h=512, w=512,
@@ -285,14 +366,14 @@ def mvsnet_cls_loss(prob_volume, depth_gt, mask, depth_value, return_prob_map=Fa
     return masked_cross_entropy, wta_depth_map
 
 
-def gradient(pred):
-    #print(pred.shape)
-    D_dy = pred[:, :, 1:, :] - pred[:,:,:-1,:]
-    D_dx = pred[:, :, :, 1:] - pred[:,:,:,:-1]
-    return D_dx, D_dy 
+# def gradient(pred):
+#     #print(pred.shape)
+#     D_dy = pred[:, :, 1:, :] - pred[:,:,:-1,:]
+#     D_dx = pred[:, :, :, 1:] - pred[:,:,:,:-1]
+#     return D_dx, D_dy 
 
 def gradient_image(img):
-    #print(img.shape)
+    # img: [B, C, H, W]
     w = img.shape[3]
     h = img.shape[2]
 
@@ -300,25 +381,28 @@ def gradient_image(img):
     l = F.pad(img, (1,0,0,0))[:,:,:,:w]
     t = F.pad(img, (0,0,1,0))[:,:,:h,:]
     b = F.pad(img, (0,0,0,1))[:,:,1:,:]
+
     dx = torch.abs(r - l)
     dy = torch.abs(b - t)
+
     dx[:,:,:,-1] = 0
     dy[:,:,-1,:] = 0
     return dx, dy	
 
-def compute_reconstr_loss_map(warped,ref,mask):
+def compute_reconstr_loss_map(warped, ref, mask):
     alpha = 0.5
-    mask = mask.unsqueeze(1).repeat(1,3,1,1)
 
-    photo_loss = F.smooth_l1_loss(warped * mask, ref * mask,  reduce='none')
+    channel = warped.shape[1]
+    mask = mask.unsqueeze(1).repeat(1, channel, 1, 1) # [B, C, H, W]
+
+    photo_loss = F.smooth_l1_loss(warped * mask, ref * mask, reduce='none')
 
     ref_dx, ref_dy = gradient_image(ref * mask)
     warpped_dx, warpped_dy = gradient_image(warped * mask)
-    #print(ref_dx.shape)
-    #grad_loss = F.smooth_l1_loss(warpped_dx, ref_dx,  size_average=True) + F.smooth_l1_loss(warpped_dy, ref_dy,  size_average=True)
+
     grad_loss = torch.abs(warpped_dx - ref_dx) + torch.abs(warpped_dy - ref_dy)
-    #print(grad_loss)
-    return (1 - alpha)*photo_loss + alpha*grad_loss
+
+    return (1 - alpha)*photo_loss + alpha * grad_loss
 
 def ssim(x, y, mask):
     c1 = 0.01**2
@@ -333,19 +417,20 @@ def ssim(x, y, mask):
     ssim_d = (mu_x**2 + mu_y**2 + c1) * (sigma_x + sigma_y + c2)
     
     ssim = ssim_n / ssim_d
-    mask = mask.unsqueeze(1).repeat(1,3,1,1)
+    channel = x.shape[1]
+    mask = mask.unsqueeze(1).repeat(1,channel,1,1)
     ssim_mask = F.avg_pool2d(mask, 3, 1)
     #print(ssim.shape)
 
-    return ssim_mask * torch.clamp((1 - ssim) / 2, 0, 1)
+    return ssim_mask * torch.clamp((1 - ssim) / 2, 0, 1) #[B, C, H, W]
 
 def depth_smoothness(depth, img, lambda_wt=1):
     """Computes image-aware depth smoothness loss."""
-    img_dx, img_dy = gradient(img)
-    depth_dx, depth_dy = gradient(depth)
+    img_dx, img_dy = gradient_image(img)
+    depth_dx, depth_dy = gradient_image(depth)
 
-    weights_x = torch.exp(- (lambda_wt * torch.mean(torch.abs(img_dx), 3, True)))
-    weights_y = torch.exp(- (lambda_wt * torch.mean(torch.abs(img_dy), 3, True)))
+    weights_x = torch.exp(- (lambda_wt * torch.mean(torch.abs(img_dx), 1, True)))
+    weights_y = torch.exp(- (lambda_wt * torch.mean(torch.abs(img_dy), 1, True)))
     
     smoothness_x = depth_dx * weights_x
     smoothness_y = depth_dy * weights_y
@@ -353,6 +438,8 @@ def depth_smoothness(depth, img, lambda_wt=1):
     return torch.mean(torch.abs(smoothness_x)) + torch.mean(torch.abs(smoothness_y))
 
 def calV(src_fea, step):
+    # src_fea: [B, C, H, W]
+    # step: [B, H, W]
     batch, channels = src_fea.shape[0], src_fea.shape[1]
     height, width = src_fea.shape[2], src_fea.shape[3]
 
@@ -360,110 +447,94 @@ def calV(src_fea, step):
     step = step * max_R
 
     step_max = torch.exp(-step * step / 0.003)
-    #print(step_max.shape)
-    step_max.view(batch, height * width)
+    step_max.view(batch, height * width) # [B, H*W]
 
     y, x = torch.meshgrid([torch.arange(0, height, dtype=torch.float32, device=src_fea.device),
                            torch.arange(0, width, dtype=torch.float32, device=src_fea.device)])
     y, x = y.contiguous(), x.contiguous()
     y, x = y.view(height * width), x.view(height * width)
-    xy = torch.stack((x, y)).repeat(batch, 1, 1)  # [2, H*W]
-    #print((max_R * 2 + 1) * (max_R * 2 + 1))
+    xy = torch.stack((x, y)).repeat(batch, 1, 1) # [B, 2, H*W]
 
-    warped_src_fea = src_fea.unsqueeze(2).repeat(1, 1, (max_R * 2 + 1) * (max_R * 2 + 1), 1, 1)#[B,C,N,H,W]
-    W = step_max.unsqueeze(1).repeat(1, (max_R * 2 + 1) * (max_R * 2 + 1), 1, 1)#[B,N,H,W]
-    step_max = step_max.unsqueeze(1).repeat(1, (max_R * 2 + 1) * (max_R * 2 + 1), 1, 1)
+    warped_src_fea = src_fea.unsqueeze(2).repeat(1, 1, (max_R * 2 + 1) * (max_R * 2 + 1), 1, 1) # [B, C, N, H, W]
+    W = step_max.unsqueeze(1).repeat(1, (max_R * 2 + 1) * (max_R * 2 + 1), 1, 1) # [B, N, H, W]
+    step_max = step_max.unsqueeze(1).repeat(1, (max_R * 2 + 1) * (max_R * 2 + 1), 1, 1) # [B, N, H, W]
+    
     i = 0
     for s_y in range(-max_R, max_R + 1):
         for s_x in range(-max_R, max_R + 1):
-            trans_x = xy[:,0, :] + s_x
+            trans_x = xy[:, 0, :] + s_x
             trans_y = xy[:, 1, :] + s_y
             trans_x_normalized = trans_x / ((width - 1) / 2) - 1
             trans_y_normalized = trans_y / ((height - 1) / 2) - 1
-            grid = torch.stack((trans_x_normalized, trans_y_normalized), dim=-1)  # [B, H*W, 2]
-            warped_src_fea[:,:,i,:,:] = F.grid_sample(src_fea, grid.view(batch, height, width, 2), mode='bilinear', padding_mode='zeros')
-            W[:,i,:,:] = math.exp((-s_y*s_y - s_x * s_x) / 0.003)
+            grid = torch.stack((trans_x_normalized, trans_y_normalized), dim=1).permute(0, 2, 1)  # [B, H*W, 2]
+            warped_src_fea[:,:,i,:,:] = F.grid_sample(src_fea, grid.view(batch, height, width, 2), mode='bilinear', padding_mode='zeros') #[B, C, N, H, W]
+            W[:,i,:,:] = math.exp((-s_y*s_y - s_x * s_x) / 0.003) #[B, N, H, W]
             i = i + 1
-        #print(i)
-    #print(step_max.shape)
-    #print(W.shape)
+
     W = torch.where(W > step_max, torch.zeros_like(W), W)
-    W = F.normalize(W, p=2, dim=1)
-    W = W.unsqueeze(1)
+    W = F.normalize(W, p=2, dim=1) # [B, N, H, W]
+    W = W.unsqueeze(1).repeat(1, channels, (max_R * 2 + 1) * (max_R * 2 + 1), 1, 1) # [B, C, N, H, W]
     WF = W * warped_src_fea
-    SWF = torch.sum(WF, dim=2)
-    V = src_fea - SWF
+
+    SWF = torch.sum(WF, dim=2) #[B, C, H, W]
+    V = torch.abs(src_fea - SWF)
 
     return V
 
 def simplifyDis(src_fea, mask, step):
+    # src_fea: [B, C, H, W]
+    channel = src_fea.shape[1]
+
     V_before = calV(src_fea, step)
-    mask = mask.unsqueeze(1).repeat(1,3,1,1)
+    
+    mask = mask.unsqueeze(1).repeat(1, channel, 1, 1)
     V_after = calV(src_fea * mask, step)
+
     loss_fn = nn.MSELoss(reduce=True, size_average=True)
+
     return loss_fn(V_before, V_after)
 
 def unsup_loss(imgs, proj_matrices, depth_est, semantic_mask):
-    #print("unsup")
-    #print(mask.shape)
-    imgs = torch.unbind(imgs, 1)
-    #print(len(imgs))
+    imgs = torch.unbind(imgs, 1) # [B, C, H, W] * N
     proj_matrices = torch.unbind(proj_matrices, 1)
     assert len(imgs) == len(proj_matrices), "Different number of images and projection matrices"
+
     img_height, img_width = imgs[0].shape[2], imgs[0].shape[3]
-    #num_depth = depth_value.shape[-1]
     num_views = len(imgs)
-    mask = semantic_mask[:, 0, :, :]
-    step_mask = semantic_mask[:, 1, :, :]
+
+    mask = semantic_mask[:, 0, :, :] # [B, H, W]
+    step_mask = semantic_mask[:, 1, :, :] # [B, H, W]
     
-    features = [img for img in imgs] #ref_num * 3
-    ref_features, src_features = features[0], features[1:]
+    ref_features, src_features = imgs[0], imgs[1:]
     
     ref_proj, src_projs = proj_matrices[0], proj_matrices[1:]
-    batch, channels = ref_features.shape[0], ref_features.shape[1]
-
-    b = True
+    batch = ref_features.shape[0]
 
     ssim_loss = 0
     for src_fea, src_proj in zip(src_features, src_projs):
-        #print(src_fea.shape)
         warped_volume, vis_mask = homo_warping(src_fea, src_proj, ref_proj, depth_est) 
 
-        recon_loss = compute_reconstr_loss_map(warped_volume, imgs[0].view(batch, 3, img_height, img_width), vis_mask)
-        ssim_loss += torch.mean(ssim(warped_volume, imgs[0].view(batch, 3, img_height, img_width), vis_mask))
-    
-        recon_loss = torch.mean(recon_loss, 1, keepdim = True)
-        #print(recon_loss.shape)
-        vis_mask = 1 - vis_mask		
-        res_map = recon_loss + 1e4 * vis_mask.unsqueeze(1)
+        recon_loss = compute_reconstr_loss_map(warped_volume, imgs[0], vis_mask) # [B, C, H, W]
+        recon_loss = torch.mean(recon_loss, 1, keepdim = True) # [B, 1, H, W]
 
-        if(b):
+        ssim_loss += torch.mean(ssim(warped_volume, imgs[0], vis_mask))
+        vis_mask = 1 - vis_mask	# [B, H, W]	
+        res_map = recon_loss + 1e4 * vis_mask.unsqueeze(1) # [B, 1, H, W]
+
+        if reproj_volume == None:
             reproj_volume =  res_map
-            b = False		
         else:																																																										
             reproj_volume = torch.cat((reproj_volume, res_map), 1) #[B, N, H, W]
-    
-    smooth_loss = depth_smoothness(depth_est.view(batch, 1, img_height, img_width), imgs[0])
         
-    top_vals, _ = torch.topk(reproj_volume, 3, dim = 1, largest = False, sorted = False)
-
+    top_vals, _ = torch.topk(reproj_volume, 3, dim = 1, largest = False, sorted = False) # [B, 3, H, W]
     top_masks = torch.where(top_vals < 1e4, torch.ones_like(top_vals), torch.zeros_like(top_vals))
     top_vals = top_vals * top_masks
+    reconstr_loss = torch.mean(top_vals)
 
-    reconstr_loss = torch.mean(torch.mean(top_vals, 1))
+    smooth_loss = depth_smoothness(depth_est.view(batch, 1, img_height, img_width), imgs[0])
 
     simplify_loss = simplifyDis(ref_features, mask, step_mask)
 
     loss = 12 * reconstr_loss + 6 * ssim_loss / (num_views - 1) + 0.18 * smooth_loss + simplify_loss
 
     return loss
-
-            
-
-
-
-
-
-
-
-

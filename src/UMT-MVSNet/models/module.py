@@ -62,94 +62,6 @@ class deConvGnReLU(nn.Module):
     def forward(self, x):
         return F.relu(self.gn(self.conv(x)), inplace=True)
 
-
-class SemanticNet(nn.Module): 
-    def __init__(self):
-        super(SemanticNet, self).__init__()
-        base_filter = 8
-        self.conv1_0 = ConvGnReLU(3              , base_filter * 2, stride=2)
-        self.conv2_0 = ConvGnReLU(base_filter * 2, base_filter * 4, stride=2)
-        self.conv3_0 = ConvGnReLU(base_filter * 4, base_filter * 8, stride=2)
-        self.conv4_0 = ConvGnReLU(base_filter * 8, base_filter * 16, stride=2)
-
-        self.conv0_1 = ConvGnReLU(3              , base_filter * 1)
-        self.conv0_2 = ConvGnReLU(base_filter * 1, base_filter * 1)
-
-        self.conv1_1 = ConvGnReLU(base_filter * 2, base_filter * 2)
-        self.conv1_2 = ConvGnReLU(base_filter * 2, base_filter * 2)
-
-        self.conv2_1 = ConvGnReLU(base_filter * 4, base_filter * 4)
-        self.conv2_2 = ConvGnReLU(base_filter * 4, base_filter * 4)
-
-        self.conv3_1 = ConvGnReLU(base_filter * 8, base_filter * 8)
-        self.conv3_2 = ConvGnReLU(base_filter * 8, base_filter * 8)
-
-        self.conv4_1 = ConvGnReLU(base_filter * 16, base_filter * 16)
-        self.conv4_2 = ConvGnReLU(base_filter * 16, base_filter * 16)
-        self.conv5_0 = deConvGnReLU(base_filter * 16, base_filter * 8, kernel_size=3, padding=1, output_padding=1, stride=2, bias=False)
-
-        self.conv5_1 = ConvGnReLU(base_filter * 16, base_filter * 8)
-        self.conv5_2 = ConvGnReLU(base_filter * 8, base_filter * 8)
-        self.conv6_0 = deConvGnReLU(base_filter * 8, base_filter * 4, kernel_size=3, padding=1, output_padding=1, stride=2, bias=False)
-
-        self.conv6_1 = ConvGnReLU(base_filter * 8, base_filter * 4)
-        self.conv6_2 = ConvGnReLU(base_filter * 4, base_filter * 4)
-        self.conv7_0 = deConvGnReLU(base_filter * 4, base_filter * 2, kernel_size=3, padding=1, output_padding=1, stride=2, bias=False)
-
-        self.conv7_1 = ConvGnReLU(base_filter * 4, base_filter * 2)
-        self.conv7_2 = ConvGnReLU(base_filter * 2, base_filter * 2)
-        self.conv8_0 = deConvGnReLU(base_filter * 2, base_filter * 1, kernel_size=3, padding=1, output_padding=1, stride=2, bias=False)
-
-        self.conv8_1 = ConvGnReLU(base_filter * 2, base_filter * 1)
-        self.conv8_2 = ConvGnReLU(base_filter * 1, base_filter * 1) # end of UNet
-        # self.conv9_0 = ConvGnReLU(base_filter * 1, base_filter * 2, 5, 2, 2)
-        # self.conv9_1 = ConvGnReLU(base_filter * 2, base_filter * 2)
-        # self.conv9_2 = ConvGnReLU(base_filter * 2, base_filter * 2)
-        # self.conv10_0 = ConvGnReLU(base_filter * 2, base_filter * 4, 5, 2, 2)
-        # self.conv10_1 = ConvGnReLU(base_filter * 4, base_filter * 4)
-        # self.conv10_2 = nn.Conv2d(base_filter * 4, base_filter * 4, 1, bias=False)
-        self.conv9_0 = nn.Conv2d(base_filter * 1, 2, kernel_size=1, stride=1)
-        self.conv9_1 = nn.Conv2d(2, 2, kernel_size=1, stride=1)
-        self.conv9_2 = nn.Conv2d(2, 2, kernel_size=1, stride=1)
-        self.activate_fn = nn.Sigmoid()
-
-    def forward(self, x):
-        conv1_0 = self.conv1_0(x)
-        conv2_0 = self.conv2_0(conv1_0)
-        conv3_0 = self.conv3_0(conv2_0)
-        conv4_0 = self.conv4_0(conv3_0)
-
-        conv0_2 = self.conv0_2(self.conv0_1(x))
-
-        conv1_2 = self.conv1_2(self.conv1_1(conv1_0))
-
-        conv2_2 = self.conv2_2(self.conv2_1(conv2_0))
-
-        conv3_2 = self.conv3_2(self.conv3_1(conv3_0))
-
-        conv4_2 = self.conv4_2(self.conv4_1(conv4_0))
-        conv5_0 = self.conv5_0(conv4_2)
-
-        x = torch.cat((conv5_0, conv3_2), dim=1)
-        conv5_2 = self.conv5_2(self.conv5_1(x))
-        conv6_0 = self.conv6_0(conv5_2)
-
-        x = torch.cat((conv6_0, conv2_2), dim=1)
-        conv6_2 = self.conv6_2(self.conv6_1(x))
-        conv7_0 = self.conv7_0(conv6_2)
-        
-        x = torch.cat((conv7_0, conv1_2), dim=1)
-        conv7_2 = self.conv7_2(self.conv7_1(x))
-        conv8_0 = self.conv8_0(conv7_2)
-
-        x = torch.cat((conv8_0, conv0_2), dim=1)
-        conv8_2 = self.conv8_2(self.conv8_1(x))
-        #print(conv8_2.shape)
-        conv9_2 = self.conv9_2(self.conv9_1(self.conv9_0(conv8_2)))
-        #conv10_2 = self.conv10_2(self.conv10_1(self.conv10_0(conv9_2)))
-        out = self.activate_fn(conv9_2)
-        return out
-
 def homo_warping_depthwise(src_fea, src_proj, ref_proj, depth_value):
     # src_fea: [B, C, H, W]
     # src_proj: [B, 4, 4]
@@ -195,9 +107,6 @@ def homo_warping(src_fea, src_proj, ref_proj, depth_maps):
     batch, channels = src_fea.shape[0], src_fea.shape[1]
     height, width = src_fea.shape[2], src_fea.shape[3]
 
-    #warped_src_fea = torch.zeros(batch, channels, num_depth, height, width).cuda() # [B, C, Ndepth, H, W] 
-
-    #with torch.no_grad():
     proj = torch.matmul(src_proj, torch.inverse(ref_proj))
     rot = proj[:, :3, :3]  # [B,3,3]
     trans = proj[:, :3, 3:4]  # [B,3,1]
@@ -238,7 +147,6 @@ def homo_warping(src_fea, src_proj, ref_proj, depth_maps):
     proj_x_normalized = proj_xy[:, 0, :] / ((width - 1) / 2) - 1
     proj_y_normalized = proj_xy[:, 1, :] / ((height - 1) / 2) - 1
     grid = torch.stack((proj_x_normalized, proj_y_normalized), dim=-1)  # [B, H*W, 2]
-
 
     warped_src_fea = F.grid_sample(src_fea, grid.view(batch, height, width, 2), mode='bilinear',
                                 padding_mode='zeros')
