@@ -64,9 +64,9 @@ class _Encoder(nn.Module):
     def __init__(self, n_in_feat, n_out_feat, drop_rate=0):
         super(_Encoder, self).__init__()
 
-        layers = [nn.Conv2d(n_in_feat, n_out_feat, 3),
+        layers = [nn.Conv2d(n_in_feat, n_out_feat, kernel_size=3, padding=1),
                   nn.ReLU(inplace=True),
-                  nn.Conv2d(n_out_feat, n_out_feat, 3),
+                  nn.Conv2d(n_out_feat, n_out_feat, kernel_size=3, padding=1),
                   nn.ReLU(inplace=True)]
 
         if drop_rate > 0:

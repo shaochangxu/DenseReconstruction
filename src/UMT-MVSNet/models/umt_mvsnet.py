@@ -73,7 +73,7 @@ class UMT_MVSNet_V3(nn.Module):
             semantic_mask = self.semantic_net(torch.cat([imgs[0], semantic_map], dim=1))
         else:
             semantic_mask = self.semantic_net(imgs[0])
-
+        
         if not self.reg_loss:
             depth = depth_regression(prob_volume, depth_values=depth_values)
             if self.predict:
@@ -443,7 +443,7 @@ def calV(src_fea, step):
     batch, channels = src_fea.shape[0], src_fea.shape[1]
     height, width = src_fea.shape[2], src_fea.shape[3]
 
-    max_R = int(min(height, width) / 20)
+    max_R = int(min(height, width) / 50)
     step = step * max_R
 
     step_max = torch.exp(-step * step / 0.003)
@@ -473,7 +473,7 @@ def calV(src_fea, step):
 
     W = torch.where(W > step_max, torch.zeros_like(W), W)
     W = F.normalize(W, p=2, dim=1) # [B, N, H, W]
-    W = W.unsqueeze(1).repeat(1, channels, (max_R * 2 + 1) * (max_R * 2 + 1), 1, 1) # [B, C, N, H, W]
+    W = W.unsqueeze(1).repeat(1, channels, 1, 1, 1) # [B, C, N, H, W]
     WF = W * warped_src_fea
 
     SWF = torch.sum(WF, dim=2) #[B, C, H, W]
@@ -511,6 +511,7 @@ def unsup_loss(imgs, proj_matrices, depth_est, semantic_mask):
     batch = ref_features.shape[0]
 
     ssim_loss = 0
+    reproj_volume = None
     for src_fea, src_proj in zip(src_features, src_projs):
         warped_volume, vis_mask = homo_warping(src_fea, src_proj, ref_proj, depth_est) 
 
@@ -523,7 +524,7 @@ def unsup_loss(imgs, proj_matrices, depth_est, semantic_mask):
 
         if reproj_volume == None:
             reproj_volume =  res_map
-        else:																																																										
+        else:
             reproj_volume = torch.cat((reproj_volume, res_map), 1) #[B, N, H, W]
         
     top_vals, _ = torch.topk(reproj_volume, 3, dim = 1, largest = False, sorted = False) # [B, 3, H, W]
