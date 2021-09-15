@@ -419,18 +419,18 @@ def test_sample(sample, detailed_summary=True, refine=False):
     if args.loss == 'unsup_loss':
         depth_est = outputs["depth"]
         semantic_mask = outputs["semantic_mask"]
-        photometric_confidence = outputs['photometric_confidence']
         loss = model_loss(sample_cuda["imgs"], sample_cuda["proj_matrices"], depth_est, semantic_mask)
     else:
         depth_gt = sample_cuda["depth"]
         depth_est = outputs["depth"]
-        photometric_confidence = outputs['photometric_confidence']
-        semantic_mask = outputs["semantic_mask"]
-        loss = model_loss(sample_cuda["imgs"], depth_est, depth_gt, mask, semantic_mask)
+        if args.model_version=="V1" or args.model_version=="V2":
+            loss = model_loss(sample_cuda["imgs"], depth_est, depth_gt, mask)
+        else:
+            semantic_mask = outputs["semantic_mask"]
+            loss = model_loss(sample_cuda["imgs"], depth_est, depth_gt, mask, True, semantic_mask)
 
     scalar_outputs = {"loss": loss}
     image_outputs = {"depth_est": depth_est * mask,
-                     "photometric_confidence": photometric_confidence * mask, 
                      "ref_img": sample["imgs"][:, 0]}
 
     if is_distributed:
