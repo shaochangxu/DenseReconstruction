@@ -1,6 +1,5 @@
 import argparse
 import os
-from scripts.python.read_write_dense import write_array
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -17,11 +16,12 @@ from utils import *
 import sys
 from datasets.data_io import read_pfm, save_pfm
 import cv2
+sys.path.append("../../scripts/python")
 from plyfile import PlyData, PlyElement
 from PIL import Image
 import ast
 import gc
-
+import struct
 
 cudnn.benchmark = True
 
@@ -54,7 +54,38 @@ if not os.path.exists(save_dir):
         print('save dir', save_dir)
         os.makedirs(save_dir)
 
-# read intrinsics and extrinsics
+def write_array(array, path):
+    """
+    see: src/mvs/mat.h
+        void Mat<T>::Write(const std::string& path)
+    """
+    assert array.dtype == np.float32
+    if len(array.shape) == 2:
+        height, width = array.shape
+        channels = 1
+    elif len(array.shape) == 3:
+        height, width, channels = array.shape
+    else:
+        assert False
+
+    with open(path, "w") as fid:
+        fid.write(str(width) + "&" + str(height) + "&" + str(channels) + "&")
+
+    with open(path, "ab") as fid:
+        if len(array.shape) == 2:
+            array_trans = np.transpose(array, (1, 0))
+        elif len(array.shape) == 3:
+            array_trans = np.transpose(array, (1, 0, 2))
+        else:
+            assert False
+        data_1d = array_trans.reshape(-1, order="F")
+        data_list = data_1d.tolist()
+        endian_character = "<"
+        format_char_sequence = "".join(["f"] * len(data_list))
+        byte_data = struct.pack(endian_character + format_char_sequence, *data_list)
+        fid.write(byte_data)
+
+#read intrinsics and extrinsics
 def read_camera_parameters(filename,scale,index,flag):
     with open(filename) as f:
         lines = f.readlines()
@@ -119,13 +150,13 @@ def read_score_file(filename):
 def save_depth():
     # dataset, dataloader
     MVSDataset = find_dataset_def(args.dataset)
-    test_dataset = MVSDataset(args.testpath, ndepths=args.numdepth, interval_scale=args.interval_scale, max_h=args.max_h, max_w=args.max_w, with_colmap_depth_map=False, with_semantic_map=False)
+    test_dataset = MVSDataset(datapath=args.testpath, listfile=args.testlist, mode="infer", nviews=5, ndepths=args.numdepth, interval_scale=args.interval_scale, max_h=args.max_h, max_w=args.max_w, both=False, with_colmap_depth_map=False, with_semantic_map=False, have_depth=False, light_idx=3)
     TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=0, drop_last=False)
 
     # model
     print('use UMT MVSNet_{}'.format(args.model_version))
     if args.model_version == "V1":
-        model = DrMVSNet(image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, predict = True, return_depth = True)
+        model = UMT_MVSNet_V1(image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, predict = True, return_depth = True)
 
     # load checkpoint file specified by args.loadckpt
     print("loading model {}".format(args.loadckpt))

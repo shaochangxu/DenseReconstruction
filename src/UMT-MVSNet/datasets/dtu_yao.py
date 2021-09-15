@@ -137,6 +137,7 @@ class MVSDataset(Dataset):
         depth = None
         depth_values = None
         proj_matrices = []
+        
         for i, vid in enumerate(view_ids):
             # NOTE that the id in image file names is from 1 to 49 (not 0~48)
             img_filename = os.path.join(self.datapath,
@@ -165,6 +166,7 @@ class MVSDataset(Dataset):
             proj_matrices.append(proj_mat)
 
             if i == 0:  # reference view
+                filename = 'rect_{:0>3}_{}_r5000.png'.format(vid + 1, light_idx)
                 if not self.fix_range:
                     depth_end = depth_interval * (self.ndepths-1) + depth_min # sample: 0:n-1
                 else:
@@ -198,7 +200,8 @@ class MVSDataset(Dataset):
                     "depth": depth,
                     "depth_values": depth_values, # generate depth index
                     "mask": mask,
-                    "depth_interval": depth_interval
+                    "depth_interval": depth_interval,
+                    "filename": filename
                     }
         else:
             return {"imgs": imgs,
@@ -206,6 +209,7 @@ class MVSDataset(Dataset):
                     "depth_values": depth_values, # generate depth index
                     "mask": mask,
                     "depth_interval": depth_interval,
+                    "filename":filename
                 }
 if __name__ == '__main__':
     from torch.utils.data import DataLoader
