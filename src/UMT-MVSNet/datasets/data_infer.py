@@ -103,6 +103,10 @@ class MVSDataset(Dataset):
     def __len__(self):
         return len(self.metas)
 
+
+    def get_camera(self, id):
+        return self.intrinsic[id - 1], self.extrinsic[id - 1]
+
     def read_cam_file(self, filename):
         with open(filename) as f:
             lines = f.readlines()

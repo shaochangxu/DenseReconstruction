@@ -250,6 +250,9 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
 
     pair_data = read_pair_file(pair_file)
 
+    MVSDataset = find_dataset_def(args.dataset)
+    test_dataset = MVSDataset(datapath=args.testpath, listfile=args.testlist, mode="infer", nviews=5, ndepths=args.numdepth, interval_scale=args.interval_scale, max_h=args.max_h, max_w=args.max_w, both=False, with_colmap_depth_map=False, with_semantic_map=False, have_depth=False, light_idx=3)
+    
     # TODO: hardcode size
     # used_mask = [np.zeros([296, 400], dtype=np.bool) for _ in range(nviews)]
 
@@ -263,7 +266,7 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
         # load the reference image
         ref_img = read_img(os.path.join(scan_folder, 'images/{:0>8}.jpg'.format(ref_view)))
         # load the estimated depth of the reference view
-        ref_depth_est = read_array(os.path.join(out_folder, 'stereo', 'depth_maps/{:0>8}.photometric.bin'.format(ref_view)))
+        ref_depth_est = read_array(os.path.join(out_folder, 'stereo', 'depth_maps/{:0>8}.jpg.photometric.bin'.format(ref_view)))
 
         import cv2
 
@@ -292,8 +295,9 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
             ref_img=ref_img[index:ref_img.shape[0]-index,:,:]
 
         # load the camera parameters
-        ref_intrinsics, ref_extrinsics = read_camera_parameters(
-            os.path.join(scan_folder, 'cams/{:0>8}_cam.txt'.format(ref_view)),scale,index,flag)
+        ref_intrinsics, ref_extrinsics = test_dataset.get_camera(ref_view)
+        # ref_intrinsics, ref_extrinsics = read_camera_parameters(
+        #     os.path.join(scan_folder, 'cams/{:0>8}_cam.txt'.format(ref_view)),scale,index,flag)
 
         photo_mask = confidence > photo_threshold
 
@@ -318,10 +322,11 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
         for src_view in src_views:
                 ct = ct + 1
                 # camera parameters of the source view
-                src_intrinsics, src_extrinsics = read_camera_parameters(
-                    os.path.join(scan_folder, 'cams/{:0>8}_cam.txt'.format(src_view)),scale,index,flag)
+                src_intrinsics, src_extrinsics = test_dataset.get_camera(src_view)
+                # src_intrinsics, src_extrinsics = read_camera_parameters(
+                #     os.path.join(scan_folder, 'cams/{:0>8}_cam.txt'.format(src_view)),scale,index,flag)
                 # the estimated depth of the source view
-                src_depth_est = read_array(os.path.join(out_folder, 'stereo', 'depth_maps/{:0>8}.photometric.bin'.format(src_view)))
+                src_depth_est = read_array(os.path.join(out_folder, 'stereo', 'depth_maps/{:0>8}.jpg.photometric.bin'.format(src_view)))
 
                 #src_depth_est=cv2.pyrUp(src_depth_est)
                 # src_depth_est=cv2.pyrUp(src_depth_est)
