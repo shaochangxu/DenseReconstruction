@@ -1,7 +1,7 @@
 import numpy as np
 import re
 import sys
-
+import struct
 
 def read_pfm(filename):
     file = open(filename, 'rb')

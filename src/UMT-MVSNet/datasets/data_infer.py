@@ -2,11 +2,11 @@ from torch.utils.data import Dataset
 
 import numpy as np
 import os
-from preprocess import *
-from colmap2mvsnet import *
+from datasets.preprocess import *
+from datasets.colmap2mvsnet import *
 
 from PIL import Image
-from data_io import *
+from datasets.data_io import *
 
 param_type = {
         'SIMPLE_PINHOLE': ['f', 'cx', 'cy'],
@@ -65,14 +65,14 @@ class MVSDataset(Dataset):
                     [params_dict['fx'], 0, params_dict['cx']],
                     [0, params_dict['fy'], params_dict['cy']],
                     [0, 0, 1]
-                ])
+                ], dtype=np.float32)
                 self.intrinsic[camera_id - 1] = i
             
             # extrinsic
             self.extrinsic = {}
             for image_id, image in self.images.items():
                 #print(image.name)
-                e = np.zeros((4, 4))
+                e = np.zeros((4, 4), dtype=np.float32)
                 e[:3, :3] = qvec2rotmat(image.qvec)
                 e[:3, 3] = image.tvec
                 e[3, 3] = 1
@@ -299,6 +299,27 @@ class MVSDataset(Dataset):
         sample["depth_values"] = depth_values
         sample["filename"] = (ref_image_filename)
 
+        normal_filename = os.path.join(self.datapath, 'stereo', 'normal_maps', '{}.photometric.bin'.format(self.images[ref_view + 1].name))
+        normal_map = read_array(normal_filename)
+        normal_map = scale_image(normal_map, scale=resize_scale, interpolation='nearest')
+        h, w = normal_map.shape[0:2]
+        new_h = h
+        new_w = w
+        if new_h > self.max_h:
+            new_h = self.max_h
+        else:
+            new_h = int(math.ceil(h / self.base_image_size) * self.base_image_size)
+        if new_w > self.max_w:
+            new_w = self.max_w
+        else:
+            new_w = int(math.ceil(w / self.base_image_size) * self.base_image_size)
+        start_h = int(math.ceil((h - new_h) / 2))
+        start_w = int(math.ceil((w - new_w) / 2))
+        finish_h = start_h + new_h
+        finish_w = start_w + new_w
+        normal_map = normal_map[start_h:finish_h, start_w:finish_w, :]
+        write_array(normal_map, normal_filename)
+        
         if self.with_colmap_depth_map:
             depth_maps = []
             for vid in view_ids:
