@@ -14,7 +14,7 @@ from datasets import find_dataset_def
 from models import *
 from utils import *
 import sys
-from datasets.data_io import read_pfm, save_pfm
+from datasets.data_io import *
 import cv2
 sys.path.append("../../scripts/python")
 from plyfile import PlyData, PlyElement
@@ -53,37 +53,6 @@ save_dir = args.outdir
 if not os.path.exists(save_dir):
         print('save dir', save_dir)
         os.makedirs(save_dir)
-
-def write_array(array, path):
-    """
-    see: src/mvs/mat.h
-        void Mat<T>::Write(const std::string& path)
-    """
-    assert array.dtype == np.float32
-    if len(array.shape) == 2:
-        height, width = array.shape
-        channels = 1
-    elif len(array.shape) == 3:
-        height, width, channels = array.shape
-    else:
-        assert False
-
-    with open(path, "w") as fid:
-        fid.write(str(width) + "&" + str(height) + "&" + str(channels) + "&")
-
-    with open(path, "ab") as fid:
-        if len(array.shape) == 2:
-            array_trans = np.transpose(array, (1, 0))
-        elif len(array.shape) == 3:
-            array_trans = np.transpose(array, (1, 0, 2))
-        else:
-            assert False
-        data_1d = array_trans.reshape(-1, order="F")
-        data_list = data_1d.tolist()
-        endian_character = "<"
-        format_char_sequence = "".join(["f"] * len(data_list))
-        byte_data = struct.pack(endian_character + format_char_sequence, *data_list)
-        fid.write(byte_data)
 
 #read intrinsics and extrinsics
 def read_camera_parameters(filename,scale,index,flag):
@@ -294,7 +263,7 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
         # load the reference image
         ref_img = read_img(os.path.join(scan_folder, 'images/{:0>8}.jpg'.format(ref_view)))
         # load the estimated depth of the reference view
-        ref_depth_est = read_pfm(os.path.join(out_folder, 'depth_est_0/{:0>8}.pfm'.format(ref_view)))[0]
+        ref_depth_est = read_array(os.path.join(out_folder, 'stereo', 'depth_maps/{:0>8}.photometric.bin'.format(ref_view)))
 
         import cv2
 
@@ -304,8 +273,9 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
         # ref_depth_est=cv2.pyrUp(ref_depth_est)
 
         # load the photometric mask of the reference view
-        confidence = read_pfm(os.path.join(out_folder, 'confidence_0/{:0>8}.pfm'.format(ref_view)))[0]
-
+        #confidence = read_pfm(os.path.join(out_folder, 'confidence_0/{:0>8}.pfm'.format(ref_view)))[0]
+        
+        confidence = np.ones_like(ref_depth_est)
         scale=float(confidence.shape[0])/ref_img.shape[0]
         index=int((int(ref_img.shape[1]*scale)-confidence.shape[1])/2)
         flag=0
@@ -351,13 +321,10 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
                 src_intrinsics, src_extrinsics = read_camera_parameters(
                     os.path.join(scan_folder, 'cams/{:0>8}_cam.txt'.format(src_view)),scale,index,flag)
                 # the estimated depth of the source view
-                src_depth_est = read_pfm(os.path.join(out_folder, 'depth_est_0/{:0>8}.pfm'.format(src_view)))[0]
+                src_depth_est = read_array(os.path.join(out_folder, 'stereo', 'depth_maps/{:0>8}.photometric.bin'.format(src_view)))
 
                 #src_depth_est=cv2.pyrUp(src_depth_est)
                 # src_depth_est=cv2.pyrUp(src_depth_est)
-
-                src_confidence = read_pfm(os.path.join(out_folder, 'confidence_0/{:0>8}.pfm'.format(src_view)))[0]
-
                 # src_mask=src_confidence>0.1
                 # src_mask=src_confidence>src_confidence.mean()
 
@@ -448,8 +415,8 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
 
 if __name__ == '__main__':
     # step1. save all the depth maps and the masks in outputs directory
-    save_depth()
+    #save_depth()
     # step2. filter saved depth maps with photometric confidence maps and geometric constraints
     photo_threshold = 0.015
-    #filter_depth(args.testpath, args.outdir, os.path.join(args.outdir,  'mvsnet.ply'), photo_threshold)
+    filter_depth("/home/hadoop/scx/buaa/test_data/ws_scan9/dense/0/", "/home/hadoop/scx/buaa/test_data/ws_scan9/dense/0/", "/home/hadoop/scx/buaa/test_data/ws_scan9/dense/0/mvsnet.ply", photo_threshold)
     
