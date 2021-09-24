@@ -169,8 +169,8 @@ class UNetConvLSTM(nn.Module): # input 3D feature volume
             #cur_input_dim = self.input_dim if i == 0 else self.hidden_dim[i-1]
             scale = 2**i if i < self.down_num else 2**(self.num_layers-i-1)
             print("layer:{}, scale:{}".format(i, scale))
-            cell_list.append(ConvGnLSTMCell(input_size=(int(self.height/scale), int(self.width/scale)),
-            #cell_list.append(ConvLSTMCell(input_size=(int(self.height/scale), int(self.width/scale)),
+            #cell_list.append(ConvGnLSTMCell(input_size=(int(self.height/scale), int(self.width/scale)),
+            cell_list.append(ConvLSTMCell(input_size=(int(self.height/scale), int(self.width/scale)),
                                         input_dim=self.input_dim[i],
                                         hidden_dim=self.hidden_dim[i],
                                         kernel_size=self.kernel_size[i],

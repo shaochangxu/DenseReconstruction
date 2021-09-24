@@ -197,8 +197,7 @@ class UMT_MVSNet_V1(nn.Module):
         assert len(imgs) == len(proj_matrices), "Different number of images and projection matrices"
         batch_size, img_height, img_width = imgs[0].shape[0], imgs[0].shape[2], imgs[0].shape[3] # [B, C, H, W]
         num_depth = depth_values.shape[1] # [B, N_depth]
-        num_views = len(imgs) # N
-        
+        num_views = len(imgs) # Ns
 
         # step 1. feature extraction
         # in: images; out: 32-channel feature maps
@@ -241,6 +240,7 @@ class UMT_MVSNet_V1(nn.Module):
                         # photometric confidence
                         prob_volume_sum4 = 4 * F.avg_pool3d(F.pad(prob_volume.unsqueeze(1), pad=(0, 0, 0, 0, 1, 2)), (4, 1, 1), stride=1, padding=0).squeeze(1)
                         depth_index = depth_regression(prob_volume, depth_values=torch.arange(num_depth, device=prob_volume.device, dtype=torch.float)).long()
+                        print(depth_index.is_cuda)
                         photometric_confidence = torch.gather(prob_volume_sum4, 1, depth_index.unsqueeze(1)).squeeze(1)
                 return {"depth": depth, 'prob_volume': prob_volume, "semantic_mask":semantic_mask, "photometric_confidence": photometric_confidence}
             else:
@@ -259,8 +259,6 @@ class UMT_MVSNet_V1(nn.Module):
 
             for d in range(num_depth):
                 # step 2. differentiable homograph, build cost volume
-               
-
                 ref_volume = ref_feature
                 warped_volumes = None
                 for src_fea, src_proj in zip(src_features, src_projs):

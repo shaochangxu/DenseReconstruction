@@ -7,6 +7,7 @@ from datasets.colmap2mvsnet import *
 
 from PIL import Image
 from datasets.data_io import *
+import matplotlib.pyplot as plt
 
 param_type = {
         'SIMPLE_PINHOLE': ['f', 'cx', 'cy'],
@@ -23,7 +24,7 @@ param_type = {
 }
 # Test any dataset with scale and center crop
 class MVSDataset(Dataset):
-    def __init__(self, datapath, input_format="COLMAP", nviews=7, listfile="", mode="infer", ndepths=192, interval_scale=1.06, inverse_depth=True,
+    def __init__(self, datapath, input_format="COLMAP", nviews=7, listfile="", mode="infer", ndepths=512, interval_scale=1.06, inverse_depth=False,
                 adaptive_scaling=True, max_h=1200, max_w=1600,sample_scale=1,base_image_size=8, 
                 with_colmap_depth_map=False, with_semantic_map=False, **kwargs):
         super(MVSDataset, self).__init__()
@@ -66,22 +67,32 @@ class MVSDataset(Dataset):
                     [0, params_dict['fy'], params_dict['cy']],
                     [0, 0, 1]
                 ], dtype=np.float32)
-                self.intrinsic[camera_id - 1] = i
+                self.intrinsic[camera_id] = i
             
             # extrinsic
             self.extrinsic = {}
+            self.mvs_images = {}
+
             for image_id, image in self.images.items():
-                #print(image.name)
+                image_id = self.name2id(image.name)
+                print(image_id)
                 e = np.zeros((4, 4), dtype=np.float32)
                 e[:3, :3] = qvec2rotmat(image.qvec)
                 e[:3, 3] = image.tvec
                 e[3, 3] = 1
-                self.extrinsic[image_id - 1] = e
+                self.extrinsic[image_id] = e
+                self.mvs_images[image_id + 1] = image
+
+            self.images = self.mvs_images
+            # for image_id, image in self.images.items():
+            #     print('{}:{}'.format(image_id, image.name))
         else:
             self.with_colmap_depth_map = False
             self.with_semantic_map = True
             self.metas = self.build_list("cams/pair.txt")
             
+    def name2id(self, str):
+        return int(str[:-4])
 
     def build_list(self, pair_file=""):
         metas = []
@@ -104,8 +115,8 @@ class MVSDataset(Dataset):
         return len(self.metas)
 
 
-    def get_camera(self, id):
-        return self.intrinsic[id - 1], self.extrinsic[id - 1]
+    def get_camera(self, img_idx):
+        return self.intrinsic[self.images[img_idx + 1].camera_id], self.extrinsic[img_idx]
 
     def read_cam_file(self, filename):
         with open(filename) as f:
@@ -125,7 +136,8 @@ class MVSDataset(Dataset):
     def read_img(self, filename):
         img = Image.open(filename)
         #img = img.resize((1000, 750),Image.ANTIALIAS)
-        return self.center_img(np.array(img, dtype=np.float32))	
+        img = self.center_img(np.array(img, dtype=np.float32))
+        return img
 
     def center_img(self, img): # this is very important for batch normalization
         img = img.astype(np.float32)
@@ -149,11 +161,14 @@ class MVSDataset(Dataset):
         extrinsics_list=[]
         
         for i, vid in enumerate(view_ids):
-            img_filename = os.path.join(self.datapath, 'blended_images/{:0>8}.jpg'.format(vid))
+            img_filename = os.path.join(self.datapath, 'images/{:0>8}.jpg'.format(vid))
             proj_mat_filename = os.path.join(self.datapath, 'cams/{:0>8}_cam.txt'.format(vid))
             img = self.read_img(img_filename)
+            img = cv2.resize(img, (1000, 750))
             imgs.append(img)
             intrinsics, extrinsics, depth_min, depth_interval = self.read_cam_file(proj_mat_filename)
+            if vid == 0:
+                print(intrinsics)
             cams.append(intrinsics)
             # multiply intrinsics and extrinsics to get projection matrix
             extrinsics_list.append(extrinsics)
@@ -170,7 +185,7 @@ class MVSDataset(Dataset):
                     depth_values = np.arange(depth_min, depth_interval * self.ndepths + depth_min, depth_interval,
                                             dtype=np.float32) # the set is [)
                     depth_end = depth_interval * self.ndepths + depth_min
-                
+
         imgs = np.stack(imgs).transpose([0, 3, 1, 2]) # N,C,H,W
        
         ##TO DO determine a proper scale to resize input
@@ -214,15 +229,18 @@ class MVSDataset(Dataset):
         return {"imgs": croped_imgs,
                 "proj_matrices": new_proj_matrices,
                 "depth_values": depth_values,
-                "filename": '{:0>8}'.format(view_ids[0])}
+                "filename": '{:0>8}.jpg'.format(view_ids[0])}
     
     def getitem_Colmap(self, idx):
         meta = self.metas[idx]
-        ref_view, src_views = meta
-        ref_image_filename = self.images[ref_view + 1].name
+
+        ref_view_idx, src_views_idx = meta
+
+        ref_image_filename = self.images[ref_view_idx + 1].name
+
         # use only the reference view and first nviews-1 source views
-        view_ids = [ref_view] + src_views[:self.nviews - 1]
-        print(view_ids)
+        view_idxs = [ref_view_idx] + src_views_idx[:self.nviews - 1]
+
         sample = {}
 
         zs = []
@@ -231,10 +249,10 @@ class MVSDataset(Dataset):
         imgs = []
         cams=[]
 
-        for p3d_id in self.images[idx+1].point3D_ids:
+        for p3d_id in self.images[ref_view_idx + 1].point3D_ids:
             if p3d_id == -1:
                 continue
-            transformed = np.matmul(self.extrinsic[idx], [self.points3d[p3d_id].xyz[0], self.points3d[p3d_id].xyz[1], self.points3d[p3d_id].xyz[2], 1])
+            transformed = np.matmul(self.extrinsic[ref_view_idx], [self.points3d[p3d_id].xyz[0], self.points3d[p3d_id].xyz[1], self.points3d[p3d_id].xyz[2], 1])
             zs.append(np.asscalar(transformed[2]))
         zs_sorted = sorted(zs)
         # relaxed depth range
@@ -252,21 +270,23 @@ class MVSDataset(Dataset):
                                     dtype=np.float32) # the set is [)
             depth_end = depth_interval * self.ndepths + depth_min
 
-        for vid in view_ids:
-            img_filename = os.path.join(self.image_dir, self.images[vid + 1].name)
+        for v_idx in view_idxs:
+            img_filename = os.path.join(self.image_dir, self.images[v_idx + 1].name)
             img = self.read_img(img_filename)
+            img = cv2.resize(img, (1000, 750))
             imgs.append(img)
-            extrinsics_list.append(self.extrinsic[vid])
-            cams.append(self.intrinsic[vid])
-	
+            extrinsics_list.append(self.extrinsic[v_idx])
+            cams.append(self.intrinsic[self.images[v_idx + 1].camera_id])
+        # imgs: [H, W, C] * N
         #imgs = np.stack(imgs).transpose([0, 3, 1, 2]) # N,C,H,W
-       
+        #imgs = np.stack(imgs)
+        #print(imgs.shape)
         ##TO DO determine a proper scale to resize input
         resize_scale = 1
         if self.adaptive_scaling:
             h_scale = 0
-            w_scale = 0       
-            for view in range(self.nviews):
+            w_scale = 0
+            for view in range(1):
                 height_scale = float(self.max_h) / imgs[view].shape[0]
                 width_scale = float(self.max_w) / imgs[view].shape[1]
                 if height_scale > h_scale:
@@ -279,16 +299,14 @@ class MVSDataset(Dataset):
             resize_scale = h_scale
             if w_scale > h_scale:
                 resize_scale = w_scale
-        
         #imgs = imgs.transpose(0,2,3,1) # N H W C
-        
         scaled_input_imgs, scaled_input_cams = scale_mvs_input(imgs, cams, scale=resize_scale, view_num=self.nviews)
         #TO DO crop to fit network
         croped_imgs, croped_cams = crop_mvs_input(scaled_input_imgs, scaled_input_cams,view_num=self.nviews,
                     max_h=self.max_h,max_w=self.max_w,base_image_size=self.base_image_size)
                     
         croped_imgs = croped_imgs.transpose(0,3,1,2) # N C H W
-	
+
         new_proj_matrices = []
         for id in range(self.nviews):
             proj_mat = extrinsics_list[id]#.copy()
@@ -303,7 +321,8 @@ class MVSDataset(Dataset):
         sample["depth_values"] = depth_values
         sample["filename"] = (ref_image_filename)
 
-        normal_filename = os.path.join(self.datapath, 'stereo', 'normal_maps', '{}.photometric.bin'.format(self.images[ref_view + 1].name))
+        normal_filename = os.path.join(self.datapath, 'stereo', 'normal_maps', '{}.photometric.bin'.format(self.images[ref_view_idx + 1].name))
+        #print(normal_filename)
         normal_map = read_array(normal_filename)
         normal_map = scale_image(normal_map, scale=resize_scale, interpolation='nearest')
         h, w = normal_map.shape[0:2]
@@ -322,7 +341,7 @@ class MVSDataset(Dataset):
         finish_h = start_h + new_h
         finish_w = start_w + new_w
         normal_map = normal_map[start_h:finish_h, start_w:finish_w, :]
-        write_array(normal_map, normal_filename)
+        #write_array(normal_map, normal_filename)
         
         if self.with_colmap_depth_map:
             depth_maps = []
@@ -396,13 +415,16 @@ if __name__ == '__main__':
     parser.add_argument('--path', type=str, help='Project dir.')
     args = parser.parse_args()
 
-    dataset = MVSDataset(args.path, max_h=128, max_w=128, with_colmap_depth_map=True, with_semantic_map=True)
+    dataset = MVSDataset(args.path, input_format="BLEND",max_h=360, max_w=480, with_colmap_depth_map=False, with_semantic_map=False)
     
-    data_loader = DataLoader(dataset, 2, shuffle=True, num_workers=0, drop_last=True)
+    data_loader = DataLoader(dataset, 1, shuffle=True, num_workers=0, drop_last=True)
     for batch_idx, sample in enumerate(data_loader):
         print("filename: {}".format(sample["filename"]))
-        print("imgs shape:{}".format(sample["imgs"].shape))
-        print("proj_matrices shape:{}".format(sample["proj_matrices"].shape))
-        print("depth_values shape:{}".format(sample["depth_values"].shape))
-        print("colmap_depth_maps shape:{}".format(sample["colmap_depth_maps"].shape))
-        print("semantic_maps shape:{}".format(sample["semantic_maps"].shape))
+        if sample["filename"][0] == "00000000":
+            print("imgs shape:{}".format(sample["imgs"].shape))
+            print("proj_matrices shape:{}".format(sample["proj_matrices"].shape))
+            print("depth_values shape:{}".format(sample["depth_values"].shape))
+            print(sample["proj_matrices"][0][0])
+            #print(1/0)
+        #print("colmap_depth_maps shape:{}".format(sample["colmap_depth_maps"].shape))
+        #print("semantic_maps shape:{}".format(sample["semantic_maps"].shape))
