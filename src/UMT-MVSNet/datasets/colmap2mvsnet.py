@@ -314,7 +314,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Convert colmap camera')
 
     parser.add_argument('--dense_folder', type=str, help='Project dir.')
-    parser.add_argument('--whitelist', type=str, help='Project dir.')
+    #parser.add_argument('--whitelist', type=str, help='Project dir.')
 
     parser.add_argument('--max_d', type=int, default=0)
     parser.add_argument('--interval_scale', type=float, default=1)
@@ -333,7 +333,7 @@ if __name__ == '__main__':
     cam_dir = os.path.join(args.dense_folder, 'cams')
     renamed_dir = os.path.join(args.dense_folder, 'images_tmp')
 
-    cameras, images, points3d = read_model(model_dir, '.txt')
+    cameras, images, points3d = read_model(model_dir, '.bin')
     num_images = len(list(images.items()))
     #print(images[1])
     param_type = {
@@ -350,18 +350,18 @@ if __name__ == '__main__':
         'THIN_PRISM_FISHEYE': ['fx', 'fy', 'cx', 'cy', 'k1', 'k2', 'p1', 'p2', 'k3', 'k4', 'sx1', 'sy1']
     }
 
-    whitelist = []
+    #whitelist = []
 
-    with open(args.whitelist, "r") as fid:
-        while True:
-            line = fid.readline()
-            if not line:
-                break
-            line = line.strip()
-            #print(line)
-            for image_id, image in images.items():
-                if(line == image.name):
-                    whitelist.append(image_id)
+#    with open(args.whitelist, "r") as fid:
+#        while True:
+#            line = fid.readline()
+#            if not line:
+#                break
+#            line = line.strip()
+#            #print(line)
+#            for image_id, image in images.items():
+#                if(line == image.name):
+#                    whitelist.append(image_id)
 
     # for _ in whitelist:
     #     print(images[_].name)
@@ -428,8 +428,8 @@ if __name__ == '__main__':
     # view selection
     score = np.zeros((len(images), len(images)))
     queue = []
-    for i in range(len(images) - 1):
-        for j in range(i + 1, len(images) - 1):
+    for i in range(len(images)):
+        for j in range(i + 1, len(images)):
             queue.append((i, j))
     def calc_score(inputs):
         i, j = inputs
@@ -453,8 +453,8 @@ if __name__ == '__main__':
         score[j, i] = s
     view_sel = []
     for i in range(len(images) - 1):
-        if not i in whitelist:
-            continue
+#        if not i in whitelist:
+#            continue
         sorted_score = np.argsort(score[i])[::-1]
         view_sel.append([(k, score[i, k]) for k in sorted_score[:10]])
     print('view_sel[0]\n', view_sel[0], end='\n\n')
@@ -465,9 +465,9 @@ if __name__ == '__main__':
     except os.error:
         print(cam_dir + ' already exist.')
     index = 0
-    for i in range(num_images - 1):
-        if not i + 1 in whitelist:
-            continue;
+    for i in range(num_images):
+        #if not i + 1 in whitelist:
+        #    continue;
         with open(os.path.join(cam_dir, '%08d_cam.txt' % index), 'w') as f:
             f.write('extrinsic\n')
             for j in range(4):
@@ -486,24 +486,25 @@ if __name__ == '__main__':
         aa = len(images) - 1
         f.write('%d\n' % index)
         for i, sorted_score in enumerate(view_sel):
-            c = 0
+            #c = 0
+            #for image_id, s in sorted_score:
+                #if image_id in whitelist:
+                #    c = c + 1
+            f.write('%d\n%d ' % (i, len(sorted_score)))
             for image_id, s in sorted_score:
-                if image_id in whitelist:
-                    c = c + 1
-            f.write('%d\n%d ' % (i, c))
-            for image_id, s in sorted_score:
-                if not image_id in whitelist:
-                    continue
-                f.write('%d %f ' % (whitelist.index(image_id), s))
+                #if not image_id in whitelist:
+                #    continue
+                #f.write('%d %f ' % (whitelist.index(image_id), s))
+                f.write('%d %f ' % (image_id, s))
             f.write('\n')
 
-    os.makedirs(renamed_dir)
-    index = 0
-    for i in range(num_images - 1):
-        if not i + 1 in whitelist:
-            continue
-        shutil.copyfile(os.path.join(image_dir, images[i+1].name), os.path.join(renamed_dir, '%08d.jpg' % index))
-        index = index + 1
-    os.remove(image_dir)
-    time.sleep(2)
-    os.rename(renamed_dir, image_dir)
+#    os.makedirs(renamed_dir)
+#    index = 0
+#    for i in range(num_images - 1):
+#        if not i + 1 in whitelist:
+#            continue
+#        shutil.copyfile(os.path.join(image_dir, images[i+1].name), os.path.join(renamed_dir, '%08d.jpg' % index))
+#        index = index + 1
+#    os.remove(image_dir)
+#    time.sleep(2)
+#    os.rename(renamed_dir, image_dir)

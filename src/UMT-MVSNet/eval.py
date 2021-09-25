@@ -48,6 +48,7 @@ parser.add_argument('--outdir', default='./outputs6', help='output dir')
 args = parser.parse_args()
 print_args(args)
 
+
 model_name = str.split(args.loadckpt, '/')[-2] + '_' + str.split(args.loadckpt, '/')[-1]
 #save_dir = os.path.join(args.outdir, model_name)
 save_dir=args.outdir
@@ -55,6 +56,10 @@ if not os.path.exists(save_dir):
     print('save dir', save_dir)
     os.makedirs(save_dir)
 
+MVSDataset = find_dataset_def(args.dataset)
+test_dataset = MVSDataset(input_format='COLMAP', datapath=args.testpath, mode="infer", nviews=5, ndepths=args.numdepth, interval_scale=args.interval_scale, max_h=args.max_h, max_w=args.max_w, both=False, with_colmap_depth_map=False, with_semantic_map=False, have_depth=False, light_idx=3)
+TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=0, drop_last=False)
+    
 # read intrinsics and extrinsics
 def read_camera_parameters(filename,scale,index,flag):
     with open(filename) as f:
@@ -123,10 +128,6 @@ def read_score_file(filename):
 
 # run MVS model to save depth maps and confidence maps
 def save_depth():
-    MVSDataset = find_dataset_def(args.dataset)
-    test_dataset = MVSDataset(input_format='COLMAP', datapath=args.testpath, mode="infer", nviews=5, ndepths=args.numdepth, interval_scale=args.interval_scale, max_h=args.max_h, max_w=args.max_w, both=False, with_colmap_depth_map=False, with_semantic_map=False, have_depth=False, light_idx=3)
-    TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=0, drop_last=False)
-    
     # model
     model = UMT_MVSNet_V1(image_scale=args.image_scale, max_h=args.max_h, max_w=args.max_w, predict = True, return_depth = True)
 
@@ -260,9 +261,6 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
     # for each reference view and the corresponding source views
     ct2 = -1
 
-    MVSDataset = find_dataset_def(args.dataset)
-    test_dataset = MVSDataset(input_format='COLMAP', datapath=args.testpath, mode="infer", nviews=5, ndepths=args.numdepth, interval_scale=args.interval_scale, max_h=args.max_h, max_w=args.max_w, both=False, with_colmap_depth_map=False, with_semantic_map=False, have_depth=False, light_idx=3)
-    
     w = 1000
     h = 750
 
@@ -302,9 +300,9 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
             ref_img=ref_img[index:ref_img.shape[0]-index,:,:]
 
         # load the camera parameters
-        # ref_intrinsics, ref_extrinsics = read_camera_parameters(
-        #    os.path.join(scan_folder, 'cams/{:0>8}_cam.txt'.format(ref_view)),scale,index,flag)
-        ref_intrinsics, ref_extrinsics = test_dataset.get_camera(ref_view)
+        ref_intrinsics, ref_extrinsics = read_camera_parameters(
+           os.path.join(scan_folder, 'cams/{:0>8}_cam.txt'.format(ref_view)),scale,index,flag)
+        #ref_intrinsics, ref_extrinsics = test_dataset.get_camera('{:0>8}.jpg'.format(ref_view))
         photo_mask = confidence > photo_threshold
 
         # photo_mask = confidence>=0
@@ -329,9 +327,9 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
         for src_view in src_views:
                 ct = ct + 1
                 # camera parameters of the source view
-                # src_intrinsics, src_extrinsics = read_camera_parameters(
-                #    os.path.join(scan_folder, 'cams/{:0>8}_cam.txt'.format(src_view)),scale,index,flag)
-                src_intrinsics, src_extrinsics = test_dataset.get_camera(src_view)
+                src_intrinsics, src_extrinsics = read_camera_parameters(
+                   os.path.join(scan_folder, 'cams/{:0>8}_cam.txt'.format(src_view)),scale,index,flag)
+                #src_intrinsics, src_extrinsics = test_dataset.get_camera('{:0>8}.jpg'.format(src_view))
                 # the estimated depth of the source view
                 src_depth_est = read_array(os.path.join(out_folder, '{:0>8}.jpg.photometric.bin'.format(src_view)))
 
@@ -431,7 +429,7 @@ def filter_depth(scan_folder, out_folder, plyfilename, photo_threshold):
 if __name__ == '__main__':
     # step1. save all the depth maps and the masks in outputs directory
     print('infer *******************\n')
-    #save_depth()
+    save_depth()
     
     print('fusion ************************\n')
     filter_depth(args.testpath, save_dir, os.path.join(save_dir, 'net.ply'), 0.1)
