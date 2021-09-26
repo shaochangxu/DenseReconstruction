@@ -113,6 +113,9 @@ class MVSDataset(Dataset):
             # viewpoints (49)
             for view_idx in range(num_viewpoint):
                 ref_view = int(f.readline().rstrip())
+                if ref_view in self.blacklists:
+                    f.readline()
+                    continue
                 read_views = [int(x) for x in f.readline().rstrip().split()[1::2]]
                 src_views = []
                 for  view in read_views:
