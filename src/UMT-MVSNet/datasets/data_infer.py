@@ -393,7 +393,7 @@ class MVSDataset(Dataset):
             semantic_maps = []
             for vid in view_names:
                 semantic_filename = os.path.join(self.datapath, 'semantic', view_name)
-                semantic_image = self.read_img(semantic_filename)
+                semantic_image = np.array(Image.open(semantic_filename))
                 semantic_image = scale_image(semantic_image, scale=resize_scale)
                 h, w = semantic_image.shape[0:2]
                 new_h = h

@@ -139,7 +139,7 @@ def save_depth():
     model = nn.DataParallel(model)
     model.cuda()
     model.eval()
-    
+    import cv2
     count = -1
     total_time = 0
     with torch.no_grad():
@@ -147,6 +147,7 @@ def save_depth():
             count += 1
             print('process', sample['filename'])
             sample_cuda = tocuda(sample)
+
             print('input shape: ', sample_cuda["imgs"].shape, sample_cuda["proj_matrices"].shape, sample_cuda["depth_values"].shape )
             time_s = time.time()
             outputs = model(sample_cuda["imgs"], sample_cuda["proj_matrices"], sample_cuda["depth_values"])
@@ -176,8 +177,11 @@ def save_depth():
                 # save depth maps
                 #print(depth_est.shape)
                 mask = semantic_map[0].squeeze()
-                depth_write = depth_est.squeeze() * mask
-                photometric_confidence_write = photometric_confidence.squeeze() * mask
+                depth_write = depth_est.squeeze() * mask.numpy()
+                photometric_confidence_write = photometric_confidence.squeeze() * mask.numpy()
+                depth_write = np.where(depth_write > 0, depth_write, -1)
+                depth_write = depth_write.astype(np.float32)
+                photometric_confidence_write = photometric_confidence_write.astype(np.float32)
                 write_array(depth_write, depth_filename)
                 write_array(photometric_confidence_write, confidence_filename)
 

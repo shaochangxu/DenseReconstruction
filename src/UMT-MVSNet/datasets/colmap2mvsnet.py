@@ -294,7 +294,7 @@ def img2semantic(semantic_img):
                         [8, 48, 98],            #grandstands
                         [0, 0, 0]               #other
                      ]
-    prob_threhold = [
+    prob_threhold = np.array([
         0.8,         #Building
         0.5,         #Square
         0.5,         #Road
@@ -309,7 +309,7 @@ def img2semantic(semantic_img):
         0.4,         #playground
         1.0,         #grandstands
         1.0          #other
-    ]
+    ])
     dis = []
     for cate_color in semantic_index:
         y = np.array(cate_color * h * w).reshape(h, w, 3)
@@ -320,11 +320,13 @@ def img2semantic(semantic_img):
     
     index = np.argmin(dis, axis=0)
     index = index.reshape(-1)
+    #print(semantic_img)
     prob_threhold = prob_threhold[index].reshape(h, w)
+    #print()
     p = np.random.rand(h, w)
     p = prob_threhold - p
     mask = np.where(p > 0, 1, 0)
-    
+    #print(mask)
     return mask
 
 
