@@ -432,4 +432,4 @@ if __name__ == '__main__':
     save_depth()
     
     print('fusion ************************\n')
-    filter_depth(args.testpath, save_dir, os.path.join(save_dir, 'net.ply'), 0.1)
+    #filter_depth(args.testpath, save_dir, os.path.join(save_dir, 'net.ply'), 0.1)

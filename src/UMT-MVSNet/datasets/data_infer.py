@@ -45,6 +45,7 @@ class MVSDataset(Dataset):
         self.base_image_size=base_image_size
 
         assert self.mode == "infer"
+        self.blacklists = []
         if self.input_format == "COLMAP":
             self.with_colmap_depth_map = with_colmap_depth_map
             self.with_semantic_map = with_semantic_map
@@ -81,8 +82,14 @@ class MVSDataset(Dataset):
                 self.extrinsic[image.name] = e
                 self.mvs_images[image.name] = image
                 self.names.append(image.name)
-
+            
             self.images = self.mvs_images
+
+            for i in range(len(self.images)):
+                filename = "{:0>8}.jpg".format(i)
+                if filename not in self.images.keys():
+                    self.blacklists.append(i)
+            
             self.metas = self.build_list("stereo/pair.txt")
             
             for i in range(len(self.metas)):
@@ -92,9 +99,6 @@ class MVSDataset(Dataset):
                 for v_id in views:
                     views_name.append('{:0>8}.jpg'.format(v_id))
                 self.metas[i] = (ref_view_name, views_name)
-
-            # for image_id, image in self.images.items():
-            #     print('{}:{}'.format(image_id, image.name))
         else:
             self.with_colmap_depth_map = False
             self.with_semantic_map = True
@@ -109,12 +113,14 @@ class MVSDataset(Dataset):
             # viewpoints (49)
             for view_idx in range(num_viewpoint):
                 ref_view = int(f.readline().rstrip())
-                src_views = [int(x) for x in f.readline().rstrip().split()[1::2]]
+                read_views = [int(x) for x in f.readline().rstrip().split()[1::2]]
+                src_views = []
+                for  view in read_views:
+                    if view not in self.blacklists:
+                        src_views.append(view)
                 self.nviews = min(self.nviews, len(src_views))
 
                 metas.append((ref_view, src_views))
-        
-        #print("dataset", self.mode, "metas:", len(metas))
         return metas
 
     def __len__(self):
@@ -161,7 +167,6 @@ class MVSDataset(Dataset):
         ref_view, src_views = meta
         # use only the reference view and first nviews-1 source views
         view_ids = [ref_view] + src_views[:self.nviews - 1]
-        #print(view_ids)
         imgs = []
         depth_values = None
         cams=[]
@@ -170,8 +175,6 @@ class MVSDataset(Dataset):
         for i, vid in enumerate(view_ids):
             img_filename = os.path.join(self.datapath, 'images/{:0>8}.jpg'.format(vid))
             proj_mat_filename = os.path.join(self.datapath, 'cams/{:0>8}_cam.txt'.format(vid))
-            # if ref_view == 1:
-            #     print(proj_mat_filename)
             img = self.read_img(img_filename)
             img = cv2.resize(img, (1000, 750))
             imgs.append(img)
@@ -185,7 +188,6 @@ class MVSDataset(Dataset):
             extrinsics_list.append(extrinsics)
             
             if i == 0:  # reference view
-                #imgs.append(self.read_img(img_filename))
                 if self.inverse_depth: #slice inverse depth
                     print('Process {} inverse depth'.format(idx))
                     depth_end = depth_interval * (self.ndepths-1) + depth_min # wether depth_end is this
@@ -197,8 +199,6 @@ class MVSDataset(Dataset):
                                             dtype=np.float32) # the set is [)
                     depth_end = depth_interval * self.ndepths + depth_min
 
-        # if ref_view == 1:
-        #     print(view_ids[0])
         imgs = np.stack(imgs).transpose([0, 3, 1, 2]) # N,C,H,W
        
         ##TO DO determine a proper scale to resize input
@@ -230,25 +230,14 @@ class MVSDataset(Dataset):
                     
         croped_imgs = croped_imgs.transpose(0,3,1,2) # N C H W
         
-        # if ref_view == 1:
-        #     print("ref view 1")
-        #     print(view_ids[0] == ref_view)
-        #     print(test)
-
         new_proj_matrices = []
         for id in range(self.nviews):
             proj_mat = extrinsics_list[id].copy()
             # Down Scale
             proj_mat[:3, :4] = np.matmul(croped_cams[id], proj_mat[:3, :4])
             new_proj_matrices.append(proj_mat)
-            #new_proj_matrices.append(croped_cams[id])
 
         new_proj_matrices = np.stack(new_proj_matrices)
-
-        # if ref_view == 1:
-        #     print("view id 1")
-        #     print(view_ids[0] == ref_view)
-        #     print(test)
 
         return {"imgs": croped_imgs,
                 "test": test,
@@ -294,8 +283,6 @@ class MVSDataset(Dataset):
             depth_end = depth_interval * self.ndepths + depth_min
 
         for view_name in view_names:
-            # if ref_view_name == "00000001.jpg":
-            #     print(view_name)
             img_filename = os.path.join(self.image_dir, self.images[view_name].name)
             img = self.read_img(img_filename)
             img = cv2.resize(img, (1000, 750))
@@ -303,10 +290,7 @@ class MVSDataset(Dataset):
             extrinsics_list.append(self.extrinsic[view_name])
             test.append(self.extrinsic[view_name])
             cams.append(self.intrinsic[self.images[view_name].camera_id])
-            #test.append(self.intrinsic[self.images[view_name].camera_id])
-            #tmp.append(self.intrinsic[self.images[view_name].camera_id])
-        # if ref_view_name == "00000001.jpg":
-        #     print(test)
+
         # imgs: [H, W, C] * N
         #imgs = np.stack(imgs).transpose([0, 3, 1, 2]) # N,C,H,W
         #imgs = np.stack(imgs)
@@ -343,7 +327,7 @@ class MVSDataset(Dataset):
             # Down Scale
             proj_mat[:3, :4] = np.matmul(croped_cams[id], proj_mat[:3, :4])
             new_proj_matrices.append(proj_mat)
-            #new_proj_matrices.append(croped_cams[id])
+            
         self.ins[ref_view_name] = croped_cams[0]
          
         new_proj_matrices = np.stack(new_proj_matrices)
@@ -377,8 +361,8 @@ class MVSDataset(Dataset):
         
         if self.with_colmap_depth_map:
             depth_maps = []
-            for vid in view_ids:
-                depth_filename = os.path.join(self.datapath, 'stereo', 'depth_maps', '{}.photometric.bin'.format(self.images[vid + 1].name))
+            for view_name in view_names:
+                depth_filename = os.path.join(self.datapath, 'stereo', 'depth_maps', '{}.photometric.bin'.format(view_name))
                 depth_image = read_array(depth_filename)
                 depth_image = scale_image(depth_image, scale=resize_scale, interpolation='nearest')
                 h, w = depth_image.shape[0:2]
@@ -404,8 +388,8 @@ class MVSDataset(Dataset):
 
         if self.with_semantic_map:
             semantic_maps = []
-            for vid in view_ids:
-                semantic_filename = os.path.join(self.datapath, 'semantic', format(self.images[vid + 1].name))
+            for vid in view_names:
+                semantic_filename = os.path.join(self.datapath, 'semantic', view_name)
                 semantic_image = self.read_img(semantic_filename)
                 semantic_image = scale_image(semantic_image, scale=resize_scale)
                 h, w = semantic_image.shape[0:2]
