@@ -57,7 +57,7 @@ if not os.path.exists(save_dir):
     os.makedirs(save_dir)
 
 MVSDataset = find_dataset_def(args.dataset)
-test_dataset = MVSDataset(input_format='COLMAP', datapath=args.testpath, mode="infer", nviews=5, ndepths=args.numdepth, interval_scale=args.interval_scale, max_h=args.max_h, max_w=args.max_w, both=False, with_colmap_depth_map=False, with_semantic_map=False, have_depth=False, light_idx=3)
+test_dataset = MVSDataset(input_format='COLMAP', datapath=args.testpath, mode="infer", nviews=5, ndepths=args.numdepth, interval_scale=args.interval_scale, max_h=args.max_h, max_w=args.max_w, both=False, with_colmap_depth_map=False, with_semantic_map=True, have_depth=False, light_idx=3)
 TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=0, drop_last=False)
     
 # read intrinsics and extrinsics
@@ -166,8 +166,8 @@ def save_depth():
             filenames = sample["filename"]
 
             # save depth maps and confidence maps
-            for filename, depth_est, photometric_confidence in zip(filenames, outputs["depth"],
-                                                                   outputs["photometric_confidence"]):
+            for filename, depth_est, photometric_confidence, semantic_map in zip(filenames, outputs["depth"],
+                                                                   outputs["photometric_confidence"], sample["semantic_maps"]):
                 #depth_filename = os.path.join(save_dir, 'dense', 'depth_est_{}'.format(args.pyramid), '{}.pfm'.format(filename))
                 depth_filename = os.path.join(save_dir, '{}.photometric.bin'.format(filename))
                 confidence_filename = os.path.join(save_dir, '{}.confidence.bin'.format(filename))
@@ -175,8 +175,11 @@ def save_depth():
                 #os.makedirs(confidence_filename.rsplit('/', 1)[0], exist_ok=True)
                 # save depth maps
                 #print(depth_est.shape)
-                write_array(depth_est.squeeze(), depth_filename)
-                write_array(photometric_confidence.squeeze(), confidence_filename)
+                mask = semantic_map[0].squeeze()
+                depth_write = depth_est.squeeze() * mask
+                photometric_confidence_write = photometric_confidence.squeeze() * mask
+                write_array(depth_write, depth_filename)
+                write_array(photometric_confidence_write, confidence_filename)
 
 # project the reference point cloud into the source view, then project back
 def reproject_with_depth(depth_ref, intrinsics_ref, extrinsics_ref, depth_src, intrinsics_src, extrinsics_src):
